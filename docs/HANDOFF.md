@@ -23,7 +23,7 @@ Last updated: 2026-11-22. This was built in a Claude Code cloud session and is b
    - `cp .env.example .env` and fill it in. Then `uv run bench-run --server mock --runs 1` (cheap check that the Claude path works).
    - `uv run bench-seed`, then `uv run bench-run --tasks lookup aggregate --runs 1`, then the full run.
 3. **Things to watch on the first live run:**
-   - The Notion MCP server (`@notionhq/notion-mcp-server@2.6.1`, Notion API 2025-09-03) uses data sources. The agent must find the `data_source_id` through `retrieve_a_database` or search. If both modes keep failing there, consider adding a hint to `BASE_PROMPT` (it goes to both modes).
+   - The Notion MCP server (`@notionhq/notion-mcp-server`, Notion API 2025-09-03) uses data sources. The agent must find the `data_source_id` through `retrieve_a_database` or search. If both modes keep failing there, consider adding a hint to `BASE_PROMPT` (it goes to both modes).
    - The seeder uses Notion API `2022-06-28` to create the database. That should be readable as a data source under 2025-09-03, but this hasn't been checked.
    - Some MCP tool params are typed `dict | str` (the server accepts JSON strings). Check that the code-mode signatures don't confuse the model.
    - Check that cache tokens show up in the report (`cache_read_tokens` > 0 on later calls). If not, check that the caching middleware is applying.
