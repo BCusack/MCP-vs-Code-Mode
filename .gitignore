@@ -6,6 +6,9 @@
 *.key
 secrets/
 
+# personal Claude Code settings (shared ones live in .claude/settings.json)
+.claude/settings.local.json
+
 # local benchmark state (Notion page/database IDs from your workspace)
 .state/
 
@@ -21,7 +24,9 @@ __pycache__/
 dist/
 build/
 
-# editors / OS
-.vscode/
+# editors / OS (shared VS Code workspace files are tracked)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea/
 .DS_Store
