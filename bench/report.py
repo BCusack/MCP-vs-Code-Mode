@@ -74,7 +74,8 @@ def build_report(paths: list[Path], name: str | None = None) -> Path:
         by_mode[r["mode"]].append(r)
         by_task[(r["task"], r["mode"])].append(r)
     tasks = list(dict.fromkeys(r["task"] for r in rows))
-    modes = [m for m in MODE_LABELS if m in by_mode]
+    # known modes first, then code-mode variants (e.g. "code:api=full") in sorted order
+    modes = [m for m in MODE_LABELS if m in by_mode] + sorted(m for m in by_mode if m not in MODE_LABELS)
     models = sorted({r["model"] for r in rows})
     servers = sorted({r["server"] for r in rows})
     runs = max(r["run"] for r in rows)
@@ -95,15 +96,16 @@ def build_report(paths: list[Path], name: str | None = None) -> Path:
     L.append(f"- **Server(s):** {', '.join(servers)}  \n- **Model(s):** {', '.join(models)}  \n"
              f"- **Tasks:** {len(tasks)} x {runs} run(s) per mode  \n- **Raw data:** "
              + ", ".join(f"`{p.relative_to(ROOT) if p.is_relative_to(ROOT) else p}`" for p in paths) + "\n")
-    L.append("Values are means per task run unless noted. Δ = each code mode vs classic MCP "
+    base = "mcp" if "mcp" in modes else modes[0]  # ablation runs without mcp compare against the first mode
+    L.append(f"Values are means per task run unless noted. Δ = each mode vs **{MODE_LABELS.get(base, base)}** "
              "(negative is better for everything except success rate).\n")
 
-    others = [m for m in modes if m != "mcp"]
-    if "mcp" in modes and others:
+    others = [m for m in modes if m != base]
+    if others:
         o = summary["overall"]
         L.append("## Headline\n")
-        L.append("| Metric | " + " | ".join(MODE_LABELS[m] for m in modes) + " | "
-                 + " | ".join(f"Δ {MODE_LABELS[m]}" for m in others) + " | Best |")
+        L.append("| Metric | " + " | ".join(MODE_LABELS.get(m, m) for m in modes) + " | "
+                 + " | ".join(f"Δ {MODE_LABELS.get(m, m)}" for m in others) + " | Best |")
         L.append("|---|" + "---:|" * (len(modes) + len(others)) + ":---:|")
         for key, label, lower, fmt in METRICS:
             vals = {m: o[m][key] for m in modes}
@@ -112,10 +114,10 @@ def build_report(paths: list[Path], name: str | None = None) -> Path:
             else:
                 best = (min if lower else max)(modes, key=lambda m: vals[m])
             L.append(f"| {label} | " + " | ".join(_fmt(fmt, vals[m]) for m in modes) + " | "
-                     + " | ".join(_delta(vals[m], vals["mcp"]) for m in others) + f" | {best} |")
+                     + " | ".join(_delta(vals[m], vals[base]) for m in others) + f" | {best} |")
         pad = " |" * len(others)
         L.append("| Total cost, all runs | " + " | ".join(f"${o[m]['total_cost_usd']:.4f}" for m in modes) + " | "
-                 + " | ".join(_delta(o[m]["total_cost_usd"], o["mcp"]["total_cost_usd"]) for m in others) + " | |")
+                 + " | ".join(_delta(o[m]["total_cost_usd"], o[base]["total_cost_usd"]) for m in others) + " | |")
         L.append("| Cost per successful run | " + " | ".join(
             f"${o[m]['cost_per_success_usd']:.4f}" if o[m]["cost_per_success_usd"] else "n/a" for m in modes)
             + " |" + pad + " |\n")
@@ -132,10 +134,10 @@ def build_report(paths: list[Path], name: str | None = None) -> Path:
                          f"{s['wall_seconds']:.1f} | {s['llm_calls']:.1f} | {s['mcp_calls']:.1f} | {s['tool_result_chars']:,.0f} |")
             pt = summary["per_task"][t]
             for m in others:
-                if "mcp" in pt and m in pt:
-                    L.append(f"| | **Δ {m}** | | **{_delta(pt[m]['total_tokens'], pt['mcp']['total_tokens'])}** | "
-                             f"**{_delta(pt[m]['cost_usd'], pt['mcp']['cost_usd'])}** | "
-                             f"**{_delta(pt[m]['wall_seconds'], pt['mcp']['wall_seconds'])}** | | | |")
+                if base in pt and m in pt:
+                    L.append(f"| | **Δ {m}** | | **{_delta(pt[m]['total_tokens'], pt[base]['total_tokens'])}** | "
+                             f"**{_delta(pt[m]['cost_usd'], pt[base]['cost_usd'])}** | "
+                             f"**{_delta(pt[m]['wall_seconds'], pt[base]['wall_seconds'])}** | | | |")
         L.append("")
 
     fails = [r for r in rows if not r["success"]]

@@ -45,15 +45,27 @@ same rules as `McpBridge`: prefer `structuredContent`, otherwise parse the JSON 
 from the integration gap. `--no-ptc-parse-json` restores the raw behavior as shipped, and each
 result row records which setting was used (`extra.ptc_parse_json`).
 
-## Phase 2: ablations of `code` mode
+## Phase 2: ablations of `code` mode. Status: built, not run live yet
 
-| Flag | Options | Question it answers |
+Variants are mode specs, so they run side by side in one invocation (same MCP session,
+alternating order) and show up as separate columns in the report:
+
+```bash
+uv run bench-run --modes code code:state=fresh code:api=full code:discovery=names --runs 3
+```
+
+| Option | Values (default first) | Question it answers |
 |---|---|---|
-| `--code-state` | `persist` / `fresh` | Does keeping state between calls matter? |
-| `--code-api` | `compact` / `full` | Do full parameter docs in the stubs cut `describe()` calls and errors? |
-| `--code-discovery` | `upfront` / `describe-only` | Is it cheaper to list names first and look up details on demand? |
+| `state` | `persist` / `fresh` | Does keeping state between calls matter? (Cloudflare: fresh; ours and LangChain: kept) |
+| `api` | `compact` / `full` | Do nested types and per-parameter docs reduce `describe()` calls and errors, and what do they cost? |
+| `discovery` | `upfront` / `names` | Is it cheaper to list names only and look up details with `describe()`? (Cloudflare's current design) |
 
-The defaults stay as they are today.
+Prompt size on the real Notion tools (24 functions, code-mode addendum only): compact about
+1,080 tokens, `api=full` about 2,780, `discovery=names` about 540. `api=full` gives roughly the
+detail `ptc` shows (TS signatures, about 5.5k tokens for the whole first call), so comparing
+`code:api=full` with `ptc` separates "more API detail" from "JS instead of Python".
+
+Without `mcp` in `--modes`, the report uses the first mode as the baseline.
 
 ## Phase 3: tasks where code mode should matter more
 
