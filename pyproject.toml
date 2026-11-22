@@ -3,7 +3,7 @@ name = "mcp-vs-code-mode"
 version = "0.1.0"
 description = "Benchmark: classic MCP tool calling vs. 'code mode' (LLM writes code against an MCP-generated API) using a LangGraph agent."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
     "langchain>=1.5.2",

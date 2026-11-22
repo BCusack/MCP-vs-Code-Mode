@@ -7,7 +7,7 @@ Open items and history: @docs/HANDOFF.md
 ## Commands
 
 ```bash
-uv sync                                   # install (Python 3.12, uv). Node 18+ is needed for npx
+uv sync                                   # install (Python 3.14, uv). Node 18+ is needed for npx
 uv run pytest -q                          # offline tests, no keys, ~5s. Run after every change
 uv run bench-run --server mock --runs 1   # offline-data smoke test (still calls Claude: needs ANTHROPIC_API_KEY)
 uv run bench-seed                         # create Notion fixtures (needs NOTION_TOKEN + NOTION_PARENT_PAGE_ID)
