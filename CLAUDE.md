@@ -11,7 +11,7 @@ uv sync                                   # install (Python 3.14, uv). Node 18+ 
 uv run pytest -q                          # offline tests, no keys, ~5s. Run after every change
 uv run bench-run --server mock --runs 1   # offline-data smoke test (still calls Claude: needs ANTHROPIC_API_KEY)
 uv run bench-seed                         # create Notion fixtures (needs NOTION_TOKEN + NOTION_PARENT_PAGE_ID)
-uv run bench-run                          # full run: 6 tasks x 2 modes x 3 runs. COSTS MONEY, ask first
+uv run bench-run                          # full run: 6 tasks x 3 modes (mcp, code, ptc) x 3 runs. COSTS MONEY, ask first
 uv run bench-report [results/raw/*.jsonl] # rebuild report from raw results
 uv run bench-seed --teardown              # archive Notion fixtures
 ```
@@ -20,6 +20,7 @@ uv run bench-seed --teardown              # archive Notion fixtures
 
 - `bench/runner.py`: CLI and per-run loop. `run_one()` builds a `create_agent` with either the MCP tools or the single `execute_python` tool.
 - `bench/codemode.py`: code mode. Builds a Python API from MCP tool schemas (`signature`), plus `McpBridge` (calls the MCP session and counts calls) and `CodeRunner` (persistent async exec with an import allowlist).
+- `bench/ptc.py`: `ptc` mode, LangChain's `langchain-quickjs` `CodeInterpreterMiddleware` (JS in QuickJS/WASM, MCP tools as `tools.*`). Also `McpCallCounter` (counts MCP calls through callbacks) and `PromptCapture` (writes `results/prompts/`).
 - `bench/metrics.py`: turns the LangGraph message list into `RunMetrics` (tokens, cache, cost, calls, tool-output chars).
 - `bench/tasks.py`: task prompts and **deterministic** checks. Write tasks verify through the Notion REST API, then clean up.
 - `bench/fixture.py`: the single source of truth for test data and expected answers (seeded RNG).

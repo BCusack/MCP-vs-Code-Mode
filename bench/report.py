@@ -15,6 +15,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # (key, label, lower_is_better, fmt)
+MODE_LABELS = {"mcp": "MCP", "code": "Code (py)", "ptc": "PTC (js)"}
+# code: our Python execute_python + generated stubs. ptc: langchain-quickjs CodeInterpreterMiddleware.
+
 METRICS = [
     ("success", "Success rate", False, "{:.0%}"),
     ("total_tokens", "Total tokens", True, "{:,.0f}"),
@@ -65,7 +68,7 @@ def build_report(paths: list[Path]) -> Path:
         by_mode[r["mode"]].append(r)
         by_task[(r["task"], r["mode"])].append(r)
     tasks = list(dict.fromkeys(r["task"] for r in rows))
-    modes = [m for m in ("mcp", "code") if m in by_mode]
+    modes = [m for m in MODE_LABELS if m in by_mode]
     models = sorted({r["model"] for r in rows})
     servers = sorted({r["server"] for r in rows})
     runs = max(r["run"] for r in rows)
@@ -86,21 +89,30 @@ def build_report(paths: list[Path]) -> Path:
     L.append(f"- **Server(s):** {', '.join(servers)}  \n- **Model(s):** {', '.join(models)}  \n"
              f"- **Tasks:** {len(tasks)} x {runs} run(s) per mode  \n- **Raw data:** "
              + ", ".join(f"`{p.relative_to(ROOT) if p.is_relative_to(ROOT) else p}`" for p in paths) + "\n")
-    L.append("Values are means per task run unless noted. Delta = code mode vs classic MCP "
+    L.append("Values are means per task run unless noted. Δ = each code mode vs classic MCP "
              "(negative is better for everything except success rate).\n")
 
-    if len(modes) == 2:
+    others = [m for m in modes if m != "mcp"]
+    if "mcp" in modes and others:
         o = summary["overall"]
         L.append("## Headline\n")
-        L.append("| Metric | MCP | Code mode | Delta | Better |\n|---|---:|---:|---:|:---:|")
+        L.append("| Metric | " + " | ".join(MODE_LABELS[m] for m in modes) + " | "
+                 + " | ".join(f"Δ {MODE_LABELS[m]}" for m in others) + " | Best |")
+        L.append("|---|" + "---:|" * (len(modes) + len(others)) + ":---:|")
         for key, label, lower, fmt in METRICS:
-            a, b = o["mcp"][key], o["code"][key]
-            better = "-" if a == b else ("code" if (b < a) == lower else "mcp")
-            L.append(f"| {label} | {_fmt(fmt, a)} | {_fmt(fmt, b)} | {_delta(b, a)} | {better} |")
-        cps = [o[m]["cost_per_success_usd"] for m in ("mcp", "code")]
-        L.append(f"| Total cost, all runs | ${o['mcp']['total_cost_usd']:.4f} | ${o['code']['total_cost_usd']:.4f} | "
-                 f"{_delta(o['code']['total_cost_usd'], o['mcp']['total_cost_usd'])} | |")
-        L.append("| Cost per successful run | " + " | ".join(f"${c:.4f}" if c else "n/a" for c in cps) + " | | |\n")
+            vals = {m: o[m][key] for m in modes}
+            if len(set(vals.values())) == 1:
+                best = "-"
+            else:
+                best = (min if lower else max)(modes, key=lambda m: vals[m])
+            L.append(f"| {label} | " + " | ".join(_fmt(fmt, vals[m]) for m in modes) + " | "
+                     + " | ".join(_delta(vals[m], vals["mcp"]) for m in others) + f" | {best} |")
+        pad = " |" * len(others)
+        L.append("| Total cost, all runs | " + " | ".join(f"${o[m]['total_cost_usd']:.4f}" for m in modes) + " | "
+                 + " | ".join(_delta(o[m]["total_cost_usd"], o["mcp"]["total_cost_usd"]) for m in others) + " | |")
+        L.append("| Cost per successful run | " + " | ".join(
+            f"${o[m]['cost_per_success_usd']:.4f}" if o[m]["cost_per_success_usd"] else "n/a" for m in modes)
+            + " |" + pad + " |\n")
 
         L.append("## Per task\n")
         L.append("| Task | Mode | Success | Total tokens | Cost | Wall s | LLM calls | MCP calls | Tool output chars |")
@@ -113,10 +125,11 @@ def build_report(paths: list[Path]) -> Path:
                 L.append(f"| {t} | {m} | {s['success']:.0%} | {s['total_tokens']:,.0f} | ${s['cost_usd']:.4f} | "
                          f"{s['wall_seconds']:.1f} | {s['llm_calls']:.1f} | {s['mcp_calls']:.1f} | {s['tool_result_chars']:,.0f} |")
             pt = summary["per_task"][t]
-            if "mcp" in pt and "code" in pt:
-                L.append(f"| | **delta** | | **{_delta(pt['code']['total_tokens'], pt['mcp']['total_tokens'])}** | "
-                         f"**{_delta(pt['code']['cost_usd'], pt['mcp']['cost_usd'])}** | "
-                         f"**{_delta(pt['code']['wall_seconds'], pt['mcp']['wall_seconds'])}** | | | |")
+            for m in others:
+                if "mcp" in pt and m in pt:
+                    L.append(f"| | **Δ {m}** | | **{_delta(pt[m]['total_tokens'], pt['mcp']['total_tokens'])}** | "
+                             f"**{_delta(pt[m]['cost_usd'], pt['mcp']['cost_usd'])}** | "
+                             f"**{_delta(pt[m]['wall_seconds'], pt['mcp']['wall_seconds'])}** | | | |")
         L.append("")
 
     fails = [r for r in rows if not r["success"]]
@@ -130,6 +143,8 @@ def build_report(paths: list[Path]) -> Path:
     L.append("## How to read this\n")
     L.append("- **Context overhead** is the input size of the first model call: system prompt + tool definitions + "
              "question. MCP mode pays for every tool schema; code mode pays for a compact API listing.\n"
+             "- **Modes:** `code` = our Python `execute_python` over generated stubs; `ptc` = LangChain "
+             "`langchain-quickjs` (JS in QuickJS/WASM, MCP tools as `tools.*`).\n"
              "- **Tool output into context** is how much raw tool data the model had to read. Code mode keeps "
              "intermediate data in the Python process and only returns what the code prints.\n"
              "- **Cost** uses `bench/pricing.py` (cache reads/writes priced separately). Output tokens include "

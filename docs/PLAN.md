@@ -1,0 +1,74 @@
+# Plan: MCP vs Code Mode, next stage
+
+Goal: measure classic MCP tool calling against code mode fairly, and find out which parts of
+code mode cause the savings. Wrapping every agent tool (files, shell) the way Claude Code's
+Code Mode does, and the TypeScript port, are out of scope for now.
+
+## Modes
+
+| Mode | What it is |
+|---|---|
+| `mcp` | The model calls MCP tools directly |
+| `code` | Our Python `execute_python` over generated stubs (`bench/codemode.py`) |
+| `ptc` | LangChain `langchain-quickjs` `CodeInterpreterMiddleware`: the model writes JS that runs in QuickJS/WASM, with the MCP tools exposed as `tools.*` (`bench/ptc.py`) |
+
+`ptc` runs on plain `create_agent`, not `deepagents`. Deep Agents adds its own system prompt
+and built-in tools, which would break the fairness rule.
+
+## Phase 1: `ptc` mode (offline, $0). Status: done
+
+- `bench/ptc.py`: middleware factory with limits matched to `code` (120 s timeout, 20k output
+  chars, state kept for the run, no subagents). MCP tools are reachable only from code.
+- MCP calls inside `eval` are counted by `McpCallCounter`. The PTC bridge passes the run's
+  callbacks to each `tool.arun`, which is also why LangSmith shows each of those calls as a
+  child span.
+- `PromptCapture` writes what the model saw on its first call, for each mode, to
+  `results/prompts/<server>_<mode>.md`.
+- The report shows any set of modes, with MCP as the baseline and a delta column for each
+  code mode.
+
+### Findings so far
+
+- `ptc` renders the MCP tools as TypeScript signatures from their JSON schemas, using the first
+  line of each description and `Promise<unknown>` as the return type. That is close to our
+  compact stubs.
+- **Inside JS, MCP tools return raw MCP content blocks** (`[{type: "text", text: "<json>"}]`).
+  The middleware's own prompt says "You do NOT need to JSON.parse results", which is wrong for
+  MCP tools. Our `code` mode parses the JSON for the model.
+
+### Decision: parse JSON for `ptc` (on by default)
+
+`--ptc-parse-json` (the default) wraps each MCP tool with `with_parsed_json`, which uses the
+same rules as `McpBridge`: prefer `structuredContent`, otherwise parse the JSON text, drop
+`null` arguments, and raise on MCP errors (a rejected Promise in JS, counted in
+`mcp_errors_inside_code`). This way the comparison isolates the design (JS/WASM vs Python)
+from the integration gap. `--no-ptc-parse-json` restores the raw behavior as shipped, and each
+result row records which setting was used (`extra.ptc_parse_json`).
+
+## Phase 2: ablations of `code` mode
+
+| Flag | Options | Question it answers |
+|---|---|---|
+| `--code-state` | `persist` / `fresh` | Does keeping state between calls matter? |
+| `--code-api` | `compact` / `full` | Do full parameter docs in the stubs cut `describe()` calls and errors? |
+| `--code-discovery` | `upfront` / `describe-only` | Is it cheaper to list names first and look up details on demand? |
+
+The defaults stay as they are today.
+
+## Phase 3: tasks where code mode should matter more
+
+`bulk_aggregate` (150+ rows, needs pagination), `join` (two data sources, multi-hop), and
+`bulk_update` (update N pages that match a filter). Checks are deterministic and come from
+`fixture.py`. This needs a bigger fixture and a re-seed.
+
+## Phase 4: reproducibility
+
+- Pin `@notionhq/notion-mcp-server` again, or record its version and a hash of the tool list.
+- Use `--runs 5` or more, and report mean ± 95% CI and the median.
+- Record the model, effort, `langchain-quickjs` version and server version in `summary.json`.
+
+## Phase 5: live runs (paid, ask before each one)
+
+1. Mock smoke test: `--server mock --modes ptc --runs 1`
+2. `--tasks lookup aggregate --modes mcp code ptc --runs 1`
+3. Full run: 9 tasks × 3 modes × 5 runs, estimated at $7 to 10. Then the ablations.
