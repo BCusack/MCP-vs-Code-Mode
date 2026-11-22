@@ -175,7 +175,7 @@ def main() -> None:
     if not a.no_report:
         from .report import build_report
 
-        md = build_report([raw])
+        md = build_report([raw], name=raw.stem)  # per-run; `bench-report` publishes results/report.md
         console.print(f"[bold green]report: {md}[/bold green]")
 
 

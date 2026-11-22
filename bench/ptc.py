@@ -72,9 +72,37 @@ def with_parsed_json(tool: BaseTool) -> BaseTool:
     )
 
 
+def ts_safe_schema(schema: Any) -> Any:
+    """Rewrite `"type": [a, b]` as the equivalent `"anyOf": [{type: a}, {type: b}]`, recursively.
+
+    Works around langchain-quickjs 0.4.0: its TS renderer (`_json_schema_to_ts`) does
+    `t in dict` on `type` and crashes with "unhashable type: 'list'" on list-valued types,
+    which are valid JSON Schema and used by the Notion MCP server (e.g. patch-block-children).
+    """
+    if isinstance(schema, list):
+        return [ts_safe_schema(x) for x in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: ts_safe_schema(v) for k, v in schema.items()}
+    t = out.get("type")
+    if isinstance(t, list):
+        rest = {k: v for k, v in out.items() if k != "type"}
+        if any(k in rest for k in ("anyOf", "oneOf")):
+            return rest  # the union already describes the type
+        return {"anyOf": [{**rest, "type": x} for x in t]}
+    return out
+
+
+def _with_ts_safe_schema(tool: BaseTool) -> BaseTool:
+    if isinstance(tool.args_schema, dict):
+        return tool.model_copy(update={"args_schema": ts_safe_schema(tool.args_schema)})
+    return tool
+
+
 def build_ptc_middleware(mcp_tools: list[BaseTool], *, parse_json: bool = True) -> CodeInterpreterMiddleware:
+    tools = [with_parsed_json(t) for t in mcp_tools] if parse_json else list(mcp_tools)
     return CodeInterpreterMiddleware(
-        ptc=[with_parsed_json(t) for t in mcp_tools] if parse_json else list(mcp_tools),
+        ptc=[_with_ts_safe_schema(t) for t in tools],
         timeout=float(EXEC_TIMEOUT_S),  # default 5s is too short for real API calls
         max_result_chars=MAX_OUTPUT_CHARS,  # default 4000; match code mode
         mode="turn",  # one run == one turn; state persists across evals within it
