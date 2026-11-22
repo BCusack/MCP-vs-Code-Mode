@@ -25,6 +25,7 @@ from rich.console import Console
 
 from .codemode import CodeRunner, McpBridge, build_code_tool, code_mode_prompt
 from .metrics import RunMetrics, fill_from_messages
+from .ptc import McpCallCounter, PromptCapture, build_ptc_middleware
 from .pricing import price_for
 from .servers import ServerSpec, get_server
 from .tasks import Ctx, Task, load_state, tasks_for
@@ -44,28 +45,37 @@ def make_model(model: str, effort: str) -> ChatAnthropic:
 
 
 async def run_one(*, spec: ServerSpec, session, mode: str, task: Task, ctx: Ctx, model: str,
-                  effort: str, cache: bool, run: int, mcp_tools, raw_tools) -> RunMetrics:
+                  effort: str, cache: bool, run: int, mcp_tools, raw_tools,
+                  capture: PromptCapture | None = None, ptc_parse_json: bool = True) -> RunMetrics:
     rm = RunMetrics(server=spec.name, mode=mode, task=task.id, model=model, run=run)
     system = BASE_PROMPT.format(label=spec.label)
     bridge = None
+    counter = McpCallCounter({t.name for t in mcp_tools})
+    middleware: list = [AnthropicPromptCachingMiddleware(ttl="5m")] if cache else []
     if mode == "mcp":
         tools = mcp_tools
-    else:
+    elif mode == "code":
         bridge = McpBridge(session, raw_tools)
         tools = [build_code_tool(CodeRunner(bridge, spec.namespace))]
         system += "\n\n" + code_mode_prompt(spec.namespace, spec.label, raw_tools)
+    elif mode == "ptc":
+        tools = []  # the middleware adds `eval`; MCP tools are reachable only from code
+        middleware.append(build_ptc_middleware(mcp_tools, parse_json=ptc_parse_json))
+        rm.extra["ptc_parse_json"] = ptc_parse_json
+    else:
+        raise ValueError(f"unknown mode {mode!r}")
+    if capture is not None:
+        middleware.append(capture)  # last, so it sees the final request
 
-    agent = create_agent(
-        make_model(model, effort), tools, system_prompt=system,
-        middleware=[AnthropicPromptCachingMiddleware(ttl="5m")] if cache else [],
-    )
+    agent = create_agent(make_model(model, effort), tools, system_prompt=system, middleware=middleware)
     messages = []
     t0 = time.perf_counter()
 
     async def drive():
         nonlocal messages
         async for state in agent.astream({"messages": [{"role": "user", "content": task.prompt(ctx)}]},
-                                         config={"recursion_limit": 60}, stream_mode="values"):
+                                         config={"recursion_limit": 60, "callbacks": [counter]},
+                                         stream_mode="values"):
             messages = state["messages"]
 
     try:
@@ -76,9 +86,12 @@ async def run_one(*, spec: ServerSpec, session, mode: str, task: Task, ctx: Ctx,
     fill_from_messages(rm, messages)
     if mode == "mcp":
         rm.mcp_calls = rm.agent_tool_calls
-    else:
+    elif mode == "code":
         rm.mcp_calls = bridge.calls
         rm.extra["mcp_errors_inside_code"] = bridge.errors
+    else:  # ptc: counted from tool callbacks fired inside eval
+        rm.mcp_calls = counter.calls
+        rm.extra["mcp_errors_inside_code"] = counter.errors
 
     if rm.error is None:
         try:
@@ -112,6 +125,7 @@ async def main_async(a: argparse.Namespace) -> Path:
         mcp_tools = await load_mcp_tools(session)
         console.print(f"[bold]{spec.name}[/bold]: {len(raw_tools)} MCP tools | model={a.model} effort={a.effort} "
                       f"cache={'on' if a.cache else 'off'} | {len(tasks)} tasks x {len(modes)} modes x {a.runs} runs")
+        captured: set[str] = set()  # modes whose first-call prompt was dumped to results/prompts/
         with out.open("w") as f:
             for task in tasks:
                 for run in range(1, a.runs + 1):
@@ -119,9 +133,16 @@ async def main_async(a: argparse.Namespace) -> Path:
                     order = modes if run % 2 else list(reversed(modes))
                     for mode in order:
                         ctx = Ctx(server=spec.name, run_tag=f"{mode}-{task.id}-{run}-{stamp}", state=state)
+                        capture = PromptCapture() if mode not in captured else None
                         rm = await run_one(spec=spec, session=session, mode=mode, task=task, ctx=ctx,
                                            model=a.model, effort=a.effort, cache=a.cache, run=run,
-                                           mcp_tools=mcp_tools, raw_tools=raw_tools)
+                                           mcp_tools=mcp_tools, raw_tools=raw_tools, capture=capture,
+                                           ptc_parse_json=a.ptc_parse_json)
+                        if capture is not None and capture.system is not None:
+                            captured.add(mode)
+                            p = ROOT / "results" / "prompts" / f"{spec.name}_{mode}.md"
+                            p.parent.mkdir(parents=True, exist_ok=True)
+                            p.write_text(capture.as_markdown(mode))
                         f.write(json.dumps(rm.to_dict()) + "\n")
                         f.flush()
                         mark = "[green]PASS[/green]" if rm.success else "[red]FAIL[/red]"
@@ -138,8 +159,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--server", default="notion")
     ap.add_argument("--tasks", nargs="*", help="task ids (default: all for the server)")
-    ap.add_argument("--modes", nargs="*", default=["mcp", "code"], choices=["mcp", "code"])
+    ap.add_argument("--modes", nargs="*", default=["mcp", "code", "ptc"], choices=["mcp", "code", "ptc"])
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--ptc-parse-json", action=argparse.BooleanOptionalAction, default=True,
+                    help="ptc mode: give code parsed JSON from MCP tools, like code mode (default on)")
     ap.add_argument("--model", default=os.environ.get("BENCH_MODEL", "claude-opus-5-5"))
     ap.add_argument("--effort", default=os.environ.get("BENCH_EFFORT", "medium"),
                     choices=["low", "medium", "high", "xhigh", "max"])
