@@ -131,6 +131,28 @@ def name_line(namespace: str, tool: McpTool) -> str:
     return f"{namespace}.{py_name(tool.name)}" + (f"  # {desc}" if desc else "")
 
 
+def index_entry(namespace: str, tool: McpTool) -> str:
+    """`discovery=index`: a skills-style YAML frontmatter entry, generated from the schema.
+
+    Same one-line description as `name_line` (so `names` vs `index` differs only in format and
+    the parameter names), plus required/optional parameter names. Nothing is hand-written:
+    curated "when to use" text would be prompt tuning that MCP mode doesn't get.
+    """
+    schema = tool.inputSchema or {}
+    props = list((schema.get("properties") or {}).keys())
+    required = [p for p in props if p in set(schema.get("required") or [])]
+    optional = [p for p in props if p not in required]
+    desc = (tool.description or "").strip().splitlines()[0][:120] if tool.description else ""
+    lines = [f"- name: {namespace}.{py_name(tool.name)}"]
+    if desc:
+        lines.append(f"  description: {json.dumps(desc)}")  # JSON string == valid YAML scalar
+    if required:
+        lines.append(f"  required: [{', '.join(required)}]")
+    if optional:
+        lines.append(f"  optional: [{', '.join(optional)}]")
+    return "\n".join(lines)
+
+
 @dataclass
 class McpBridge:
     """Async callables bound to a live MCP session; counts calls that hit the server."""
@@ -163,9 +185,23 @@ class McpBridge:
             raise RuntimeError(f"{tool.name} failed: {str(out)[:2000]}")
         return out
 
+    def tool_for(self, py: str) -> McpTool:
+        """Accepts `fn` or `ns.fn` (the listing shows the qualified name)."""
+        py = py.rsplit(".", 1)[-1]
+        if py not in self.by_py_name:
+            raise KeyError(f"no function {py!r}. Available: {sorted(self.by_py_name)}")
+        return self.by_py_name[py]
+
     def describe(self, py: str) -> str:
-        t = self.by_py_name[py]
-        return json.dumps({"name": py, "description": t.description, "input_schema": t.inputSchema}, indent=1)
+        """`describe=json`: the raw MCP input schema."""
+        t = self.tool_for(py)
+        return json.dumps({"name": py_name(t.name), "description": t.description, "input_schema": t.inputSchema},
+                          indent=1)
+
+    def describe_doc(self, namespace: str, py: str) -> str:
+        """`describe=doc`: a readable page (the skills 'level 2' idea) instead of raw JSON Schema:
+        the `api=full` signature, with nested types and each parameter's description."""
+        return signature_full(namespace, self.tool_for(py))
 
 
 class _Namespace:
@@ -196,7 +232,7 @@ def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
 class CodeRunner:
     """A persistent async 'REPL': variables survive between execute_python calls."""
 
-    def __init__(self, bridge: McpBridge, namespace: str, persist: bool = True):
+    def __init__(self, bridge: McpBridge, namespace: str, persist: bool = True, describe: str = "json"):
         safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
                          if k not in {"open", "exec", "eval", "compile", "input", "breakpoint", "exit", "quit"}}
         safe_builtins["__import__"] = _safe_import
@@ -204,7 +240,8 @@ class CodeRunner:
         self.globals: dict[str, Any] = {
             "__builtins__": safe_builtins,
             namespace: _Namespace(bridge, namespace),
-            "describe": bridge.describe,
+            "describe": (bridge.describe if describe == "json"
+                         else lambda fn: bridge.describe_doc(namespace, fn)),
             "json": json,
             "asyncio": asyncio,
         }
@@ -261,27 +298,36 @@ def build_code_tool(runner: CodeRunner) -> StructuredTool:
 
 
 API_STYLES = ("compact", "full")
-DISCOVERY_STYLES = ("upfront", "names")
+DISCOVERY_STYLES = ("upfront", "names", "index")
+DESCRIBE_STYLES = ("json", "doc")
 
 
 def code_mode_prompt(namespace: str, server_label: str, tools: list[McpTool], *,
-                     api: str = "compact", discovery: str = "upfront") -> str:
+                     api: str = "compact", discovery: str = "upfront", describe: str = "json") -> str:
     """System-prompt addendum for code mode.
 
     api: `compact` (one-line stubs, top-level types) or `full` (nested types + per-parameter docs).
-    discovery: `upfront` (every signature listed) or `names` (names only; parameters via describe()).
+    discovery: `upfront` (every signature listed), `names` (names only; parameters via describe()),
+    or `index` (skills-style YAML frontmatter: name, description, parameter names).
+    describe: what `describe()` returns: `json` (raw input schema) or `doc` (readable signature + Args).
     """
-    if api not in API_STYLES or discovery not in DISCOVERY_STYLES:
-        raise ValueError(f"bad code-mode options api={api!r} discovery={discovery!r}")
-    if discovery == "names":
+    if api not in API_STYLES or discovery not in DISCOVERY_STYLES or describe not in DESCRIBE_STYLES:
+        raise ValueError(f"bad code-mode options api={api!r} discovery={discovery!r} describe={describe!r}")
+    what = "input schema" if describe == "json" else "full signature with parameter types and docs"
+    if discovery == "index":
+        api_text = "```yaml\n" + "\n".join(index_entry(namespace, t) for t in tools) + "\n```"
+        describe_rule = (f"- The API is listed as an index (name, description, parameter names). Run "
+                         f"`print(describe(\"<function>\"))` for a function's {what} before calling it if you are "
+                         f"unsure of argument shapes (you can describe several in one call).")
+    elif discovery == "names":
         api_text = "\n".join(name_line(namespace, t) for t in tools)
         describe_rule = (f"- Only function names are listed below. Before calling a function, run "
-                         f"`print(describe(\"<function>\"))` to get its input schema (you can describe several in one call).")
+                         f"`print(describe(\"<function>\"))` to get its {what} (you can describe several in one call).")
     else:
         render = signature_full if api == "full" else signature
         api_text = "\n\n".join(render(namespace, t) for t in tools)
-        describe_rule = ("- For a function's full input schema, run `print(describe(\"<function>\"))` before you call a "
-                         "function whose arguments you are unsure of.")
+        describe_rule = (f"- For a function's {'full input schema' if describe == 'json' else what}, run "
+                         "`print(describe(\"<function>\"))` before you call a function whose arguments you are unsure of.")
     return f"""You can use {server_label} through a Python API, by writing code for the `execute_python` tool.
 
 Rules:

@@ -42,7 +42,8 @@ BASE_PROMPT = (
 
 # Mode specs: "mcp", "ptc", "code", or a code-mode variant like "code:state=fresh,api=full".
 # Variants run side by side in one invocation (same session, alternating order) for Phase 2 ablations.
-CODE_OPTIONS = {"state": ("persist", "fresh"), "api": ("compact", "full"), "discovery": ("upfront", "names")}
+CODE_OPTIONS = {"state": ("persist", "fresh"), "api": ("compact", "full"),
+                "discovery": ("upfront", "names", "index"), "describe": ("json", "doc")}
 CODE_DEFAULTS = {k: v[0] for k, v in CODE_OPTIONS.items()}
 
 
@@ -95,9 +96,10 @@ async def run_one(*, spec: ServerSpec, session, mode: str, task: Task, ctx: Ctx,
         tools = mcp_tools
     elif kind == "code":
         bridge = McpBridge(session, raw_tools)
-        tools = [build_code_tool(CodeRunner(bridge, spec.namespace, persist=opts["state"] == "persist"))]
-        system += "\n\n" + code_mode_prompt(spec.namespace, spec.label, raw_tools,
-                                              api=opts["api"], discovery=opts["discovery"])
+        tools = [build_code_tool(CodeRunner(bridge, spec.namespace, persist=opts["state"] == "persist",
+                                            describe=opts["describe"]))]
+        system += "\n\n" + code_mode_prompt(spec.namespace, spec.label, raw_tools, api=opts["api"],
+                                              discovery=opts["discovery"], describe=opts["describe"])
         rm.extra["code_options"] = opts
     elif kind == "ptc":
         tools = []  # the middleware adds `eval`; MCP tools are reachable only from code
@@ -202,7 +204,8 @@ def main() -> None:
     ap.add_argument("--server", default="notion")
     ap.add_argument("--tasks", nargs="*", help="task ids (default: all for the server)")
     ap.add_argument("--modes", nargs="*", type=_mode_arg, default=["mcp", "code", "ptc"],
-                    help="mcp | ptc | code[:state=persist|fresh,api=compact|full,discovery=upfront|names]")
+                    help="mcp | ptc | code[:state=persist|fresh,api=compact|full,"
+                         "discovery=upfront|names|index,describe=json|doc]")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--ptc-parse-json", action=argparse.BooleanOptionalAction, default=True,
                     help="ptc mode: give code parsed JSON from MCP tools, like code mode (default on)")
