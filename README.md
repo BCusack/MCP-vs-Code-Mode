@@ -1,14 +1,14 @@
 # MCP vs Code Mode
 
-A small personal benchmark: does **code mode** beat **classic MCP tool calling**?
+A small personal benchmark: does **code mode** beat **classic MCP (Model Context Protocol) tool calling**?
 
-**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Multi-agent design (not built): [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain PTC) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants).
+**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Multi-agent design (not built): [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain's PTC, programmatic tool calling) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants).
 
 Both modes use the **same LangGraph agent** (`langchain.agents.create_agent`), the **same Claude model**, the **same MCP server** (the official Notion MCP server), and the **same tasks**. Only the way the model reaches the tools differs.
 
 | | Classic MCP | Code mode |
 |---|---|---|
-| What the model sees | All 24 Notion tool schemas (~80 KB of JSON) | One `execute_python` tool plus a compact Python API listing (~4 KB) generated from the same MCP server |
+| What the model sees | All 24 Notion tool schemas (~80 KB of JSON, i.e. JavaScript Object Notation) | One `execute_python` tool plus a compact Python API (application programming interface) listing (~4 KB) generated from the same MCP server |
 | How it calls Notion | One tool call per API call. Every raw JSON response goes back into the context. | Writes Python that calls `await notion.query_data_source(...)` etc. Loops, filters and math run in code, and only what the code `print`s goes back to the model. |
 | Inspired by | - | Cloudflare "Code Mode", Anthropic "Code execution with MCP" |
 
@@ -16,9 +16,9 @@ Both modes use the **same LangGraph agent** (`langchain.agents.create_agent`), t
 
 Per task, per mode, averaged over N runs:
 
-- **Success rate**, checked deterministically against known fixture data (no LLM judge)
+- **Success rate**, checked deterministically against known fixture data (no LLM judge; LLM = large language model)
 - **Tokens**: total, input (cached vs uncached), cache reads, output (including thinking)
-- **Cost (USD)**, from `bench/pricing.py`, with cache reads and writes priced separately; also **cost per successful run**
+- **Cost (USD, US dollars)**, from `bench/pricing.py`, with cache reads and writes priced separately; also **cost per successful run**
 - **Context overhead**: input tokens on the first call (system prompt + tool definitions)
 - **Wall-clock time**
 - **LLM round-trips**, **tool calls the model made**, and **calls that actually hit the MCP server**
@@ -38,7 +38,7 @@ The seeder creates a sandbox page containing a 60-row `Bench Projects` database 
 | `write` | write | Find the top 3 by Points and create a page with a bulleted list (verified, then archived) |
 | `update` | write | Update two properties on one row (verified, then restored) |
 
-## Setup (WSL2)
+## Setup (WSL2, Windows Subsystem for Linux)
 
 ```bash
 cd ~/projects
@@ -53,7 +53,7 @@ Fill in `.env`:
 
 1. `ANTHROPIC_API_KEY`: from console.anthropic.com
 2. `NOTION_TOKEN`: create an **internal integration** at notion.so/profile/integrations (read, update and insert content)
-3. `NOTION_PARENT_PAGE_ID`: create an empty throwaway page, connect the integration to it (`...` > Connections), then paste its URL or ID
+3. `NOTION_PARENT_PAGE_ID`: create an empty throwaway page, connect the integration to it (`...` > Connections), then paste its URL (web address) or ID (identifier)
 
 Then:
 
@@ -77,7 +77,7 @@ A full default run is 36 agent runs on Claude Opus 5.5. Expect a few dollars; ch
 - Keys live only in `.env`, which `.gitignore` excludes. `.env.example` has empty placeholders.
 - `.state/` (your Notion page and database IDs) and `results/raw/` (per-run metrics, including final answers) are git-ignored.
 - The Notion token goes only to the MCP child process's environment. It is never logged or written to results.
-- gitleaks runs as a pre-commit hook (opt-in) and in CI on every push.
+- gitleaks runs as a pre-commit hook (opt-in) and in CI (continuous integration) on every push.
 
 ## Caveats
 
@@ -88,7 +88,7 @@ A full default run is 36 agent runs on Claude Opus 5.5. Expect a few dollars; ch
 
 ## Adding another MCP server
 
-1. Add a `ServerSpec` in `bench/servers.py` (stdio command or HTTP URL).
+1. Add a `ServerSpec` in `bench/servers.py` (a stdio command, or an HTTP (Hypertext Transfer Protocol) URL).
 2. Add tasks with deterministic checks in `bench/tasks.py` (`servers=("yourserver",)`).
 3. `uv run bench-run --server yourserver`
 
@@ -99,9 +99,9 @@ Code mode should win most where tool lists are large or responses are big and ne
 | Server | Why it's interesting |
 |---|---|
 | **Google Drive / Docs / Sheets** (e.g. `taylorwilsdon/google_workspace_mcp`) | Many tools (50+) and large document bodies. Sheets aggregation is a natural code-mode win. |
-| **GitHub** (`github/github-mcp-server`) | Around 90 tools with very large schemas. Paginated issue/PR listings. |
+| **GitHub** (`github/github-mcp-server`) | Around 90 tools with very large schemas. Paginated issue/PR (pull request) listings. |
 | **Slack** | Paging channel history then summarizing or filtering. |
 | **Linear / Jira / Atlassian** | Database-like queries plus cross-object joins, similar to the Notion tasks. |
-| **Postgres / SQLite MCP** | Control case: SQL already does the "code" part, so the gap should shrink. |
+| **Postgres / SQLite MCP** | Control case: SQL (Structured Query Language) already does the "code" part, so the gap should shrink. |
 | **Filesystem** (`@modelcontextprotocol/server-filesystem`) | Few, small tools. Control case where classic MCP may win. |
-| **Playwright / browser** | Huge DOM snapshots in tool results, which stresses context. |
+| **Playwright / browser** | Huge DOM (Document Object Model) snapshots in tool results, which stresses context. |
