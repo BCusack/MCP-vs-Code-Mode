@@ -2,7 +2,7 @@
 
 A personal benchmark comparing **classic MCP tool calling** with **code mode** (the model writes Python against an API generated from the same MCP server). The first target is the official Notion MCP server. The harness is a LangGraph agent on Claude. The output is `results/report.md`.
 
-Open items and history: @docs/HANDOFF.md
+Open items and history: @docs/HANDOFF.md. Results and conclusions: docs/FINDINGS.md (project wrapped up after Phase 2 of docs/PLAN.md).
 
 ## Commands
 

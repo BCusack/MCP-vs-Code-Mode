@@ -45,7 +45,7 @@ same rules as `McpBridge`: prefer `structuredContent`, otherwise parse the JSON 
 from the integration gap. `--no-ptc-parse-json` restores the raw behavior as shipped, and each
 result row records which setting was used (`extra.ptc_parse_json`).
 
-## Phase 2: ablations of `code` mode. Status: built, not run live yet
+## Phase 2: ablations of `code` mode. Status: done, see [FINDINGS.md](FINDINGS.md)
 
 Variants are mode specs, so they run side by side in one invocation (same MCP session,
 alternating order) and show up as separate columns in the report:
@@ -73,6 +73,11 @@ the shared `$defs`) and 130 to 220 as `doc`. The `index` entries are generated f
 never hand-written, so code mode gets no prompt tuning that MCP mode lacks.
 
 Without `mcp` in `--modes`, the report uses the first mode as the baseline.
+
+## Status after Phase 2
+
+The project stops here: findings are in [FINDINGS.md](FINDINGS.md). Phases 3 to 5 below
+are not planned; they stay as notes for a follow-up (for example the TypeScript repo).
 
 ## Phase 3: tasks where code mode should matter more
 

@@ -2,6 +2,8 @@
 
 A small personal benchmark: does **code mode** beat **classic MCP tool calling**?
 
+**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain PTC) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants).
+
 Both modes use the **same LangGraph agent** (`langchain.agents.create_agent`), the **same Claude model**, the **same MCP server** (the official Notion MCP server), and the **same tasks**. Only the way the model reaches the tools differs.
 
 | | Classic MCP | Code mode |
@@ -57,7 +59,8 @@ Then:
 
 ```bash
 uv run bench-seed                  # creates the fixtures under your page (~1 min, rate limited)
-uv run bench-run                   # all 6 tasks x 2 modes x 3 runs, then writes results/report.md
+uv run bench-run                   # all 6 tasks x 3 modes (mcp, code, ptc) x 3 runs; writes results/reports/<run>.md
+uv run bench-report               # publish the latest run as results/report.md
 uv run bench-run --tasks aggregate overdue --runs 5
 uv run bench-run --model claude-sonnet-5-5 --effort low
 uv run bench-run --no-cache        # see what prompt caching does for MCP mode's big tool list
@@ -79,7 +82,7 @@ A full default run is 36 agent runs on Claude Opus 5.5. Expect a few dollars; ch
 ## Caveats
 
 - **Code mode's sandbox is not a security boundary.** Model-written code runs in-process with an import allowlist and no `open`/`eval`. That guards against accidents, not attacks, so only point it at a test workspace. For real use, run the code in an isolated container or V8 isolate.
-- The code-mode API listing uses one-line signatures. The model calls `describe("fn")` to get a full schema on demand (progressive disclosure). A richer typed listing would cost more tokens up front but may cut errors.
+- The default code-mode API listing uses one-line signatures, with `describe("fn")` for a full schema on demand. The ablations found the richer listing (`code:api=full`) about 13% cheaper; see docs/FINDINGS.md.
 - Prompt caching is on by default for both modes (realistic). Run with `--no-cache` to see raw context cost.
 - LLM runs are noisy. Use 5 or more runs before trusting small differences.
 
