@@ -24,20 +24,18 @@ LangChain's PTC (JS) came in at -45%. Inside code mode, a fully listed, detailed
 - Findings write-up with diagrams, plus a design for a multi-agent, full-API code mode
   ([MULTI_AGENT.md](MULTI_AGENT.md), not built or measured) (PR #10).
 - First-call prompt dumps for every mode in `results/prompts/`.
+- Stale branches from merged PRs deleted (2026-11-24).
 
 ## Open (none planned)
 
-1. **Housekeeping:** stale remote branches from merged PRs (`ccr-853f1a15-h4b8xe`,
-   `findings-docs`, `first-live-run`, `phase2-ablations`, `ptc-followups`, `ptc-mode`,
-   `python-3.14`) can be deleted.
-2. **Phase 3 tasks** where code mode should gain most: `bulk_aggregate` (150+ rows,
+1. **Phase 3 tasks** where code mode should gain most: `bulk_aggregate` (150+ rows,
    pagination), `join` (two data sources), `bulk_update`. Needs a bigger fixture and a re-seed.
-3. **Phase 4 reproducibility:** pin `@notionhq/notion-mcp-server` (or record its version and a
+2. **Phase 4 reproducibility:** pin `@notionhq/notion-mcp-server` (or record its version and a
    hash of the tool list), use `--runs 5`+, report mean ± 95% CI and median, record versions in
    `summary.json`.
-4. **Phase 6 (parked):** build the multi-agent design and test it against a single
+3. **Phase 6 (parked):** build the multi-agent design and test it against a single
    `code:api=full` agent on Phase 3 tasks.
-5. **Other MCP servers:** Google Workspace, GitHub, Slack, Linear/Jira, plus Postgres and
+4. **Other MCP servers:** Google Workspace, GitHub, Slack, Linear/Jira, plus Postgres and
    filesystem as control cases. Add a `ServerSpec` in `bench/servers.py` and tasks in
    `bench/tasks.py`.
 
