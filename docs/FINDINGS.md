@@ -9,7 +9,159 @@ Data: [`results/report.md`](../results/report.md) (MCP vs code vs ptc, 54 runs) 
 What each mode's model saw on its first call is in [`results/prompts/`](../results/prompts/).
 Every run in both reports passed its deterministic check.
 
+## How the modes work
+
+All three modes share one harness. Only what the model is given to reach Notion changes.
+
+```mermaid
+flowchart LR
+    Task["Task prompt"] --> Run["runner.run_one()"]
+    Run --> Agent["create_agent<br/>same model, effort, caching, BASE_PROMPT"]
+    Agent -->|mcp| T1["24 MCP tools<br/>(JSON schemas)"]
+    Agent -->|code| T2["execute_python<br/>+ code_mode_prompt()"]
+    Agent -->|ptc| T3["eval<br/>CodeInterpreterMiddleware"]
+    subgraph Code["code mode (bench/codemode.py)"]
+        T2 --> CR["CodeRunner<br/>async exec, import allowlist"]
+        CR --> BR["McpBridge<br/>parse JSON, count calls"]
+    end
+    subgraph PTC["ptc mode (bench/ptc.py)"]
+        T3 --> QJ["QuickJS / WASM<br/>tools.*"]
+        QJ --> WP["with_parsed_json()<br/>+ McpCallCounter"]
+    end
+    T1 --> S[("one MCP session")]
+    BR --> S
+    WP --> S
+    S --> NS["@notionhq/notion-mcp-server<br/>(npx)"]
+```
+
+The core difference, on a task that has to page through a database and add up a column:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Claude
+    participant H as Harness
+    participant N as Notion MCP server
+    rect rgba(127,127,127,0.12)
+    Note over M,N: MCP mode: every page of rows passes through the model
+    loop each page of results
+        M->>H: tool call query_data_source(start_cursor)
+        H->>N: call_tool
+        N-->>H: full JSON page
+        H-->>M: full JSON page (into context)
+    end
+    M->>M: sum the points in its head
+    end
+    rect rgba(127,127,127,0.12)
+    Note over M,N: Code mode: one script, only the answer comes back
+    M->>H: execute_python(code)
+    loop each page of results (inside Python)
+        H->>N: McpBridge.call -> call_tool
+        N-->>H: JSON page (stays in the interpreter)
+    end
+    H-->>M: printed result, e.g. "42"
+    end
+```
+
+In MCP mode every page of raw JSON goes through the model's context. In code mode the model
+writes one script; the pages stay in the Python process and only the printed answer returns.
+
+### Code samples
+
+The model gets one tool. A script it might write for the "sum Diego's in-progress points" task
+(this one is the scripted test in `tests/test_pipeline.py`; live runs look similar):
+
+```python
+rows, cur = [], None
+while True:
+    r = await notion.query_data_source(data_source_id=ds_id, start_cursor=cur)
+    rows += r["results"]
+    if not r["has_more"]:
+        break
+    cur = r["next_cursor"]
+sum(x["properties"]["Points"]["number"] for x in rows
+    if x["properties"]["Owner"]["select"]["name"] == "Diego"
+    and x["properties"]["Status"]["select"]["name"] == "In progress")
+```
+
+The harness side is small. `McpBridge` turns each `notion.<fn>()` into an MCP call and parses
+the result (`bench/codemode.py`, simplified):
+
+```python
+async def call(self, py: str, **kwargs) -> Any:
+    tool = self.by_py_name[py]
+    args = {k: v for k, v in kwargs.items() if v is not None}
+    self.calls += 1
+    res = await self.session.call_tool(tool.name, args)
+    out = res.structuredContent or json.loads(text_of(res.content))
+    if res.isError:
+        raise RuntimeError(f"{tool.name} failed: {str(out)[:2000]}")
+    return out
+```
+
+`CodeRunner` wraps the model's code in an `async def` so top-level `await` works, prints the
+last bare expression like a notebook cell, and keeps variables between calls.
+
+`ptc` mode is LangChain's middleware with the same limits, plus our two fixes
+(`bench/ptc.py`):
+
+```python
+CodeInterpreterMiddleware(
+    ptc=[_with_ts_safe_schema(with_parsed_json(t)) for t in mcp_tools],
+    timeout=120.0, max_result_chars=20_000, mode="turn", subagents=False,
+)
+```
+
+What the model reads for the same Notion function, per mode (from `results/prompts/`):
+
+```python
+# code (compact, default)
+async def notion.query_data_source(data_source_id: str, filter_properties: list = None,
+    filter: dict | str = None, sorts: list = None, start_cursor: str = None, ...) -> Any
+    """Notion | Query a data source"""
+```
+
+```python
+# code:api=full (nested types + Args)
+async def notion.query_data_source(data_source_id: str, filter_properties: list[str | dict] = None,
+    filter: dict | str = None,
+    sorts: list[{"property": str, "direction": Literal['ascending', 'descending']} | str | dict] = None, ...) -> Any
+    """Notion | Query a data source ...
+    Args:
+        data_source_id: Identifier for a Notion data source (database)
+        filter_properties: A list of page property value IDs to limit the response"""
+```
+
+```yaml
+# code:discovery=index (skills-style frontmatter)
+- name: notion.query_data_source
+  description: "Notion | Query a data source"
+  required: [data_source_id]
+  optional: [filter_properties, filter, sorts, start_cursor, page_size, archived, in_trash]
+```
+
+```ts
+// ptc (TypeScript, rendered by langchain-quickjs)
+/** Notion | Query a data source */
+tools.APIQueryDataSource(input: {
+  /** Identifier for a Notion data source (database) */ data_source_id: string;
+  sorts?: ({ property: string; direction: "ascending" | "descending" } | string | Record<string, unknown>)[];
+  start_cursor?: string; page_size?: number; ...
+}): Promise<unknown>
+```
+
+In MCP mode the model gets this function as a JSON Schema tool definition instead; all 24
+definitions make up most of MCP mode's 8,942-token first call.
+
 ## 1. Code mode beats classic MCP tool calling
+
+```mermaid
+xychart-beta
+    title "Mean cost per task run (USD), Notion, Opus 5.5"
+    x-axis ["MCP", "Code (py)", "PTC (js)"]
+    y-axis "USD" 0 --> 0.09
+    bar [0.0801, 0.0379, 0.0443]
+```
 
 | | MCP | Code (Python) | PTC (LangChain, JS) |
 |---|---:|---:|---:|
@@ -29,6 +181,14 @@ Every run in both reports passed its deterministic check.
 
 ## 2. What matters inside code mode (ablations)
 
+```mermaid
+xychart-beta
+    title "Code-mode variants: cost vs default code (%)"
+    x-axis ["api=full", "index", "index+doc", "fresh", "ptc", "names"]
+    y-axis "% vs code" -20 --> 60
+    bar [-13, 8, 8, 10, 25, 57]
+```
+
 Change against default `code` mode (compact stubs, all functions listed, variables kept between
 calls):
 
@@ -40,6 +200,22 @@ calls):
 | `state=fresh`: variables wiped between calls (Cloudflare's model) | +10% | 2,145 | 8,428 | Keeping state is slightly better |
 | `ptc`: LangChain `langchain-quickjs` | +25% | 5,474 | 5,582 | Costs more than our Python |
 | `discovery=names`: names only, details through `describe()` | **+57%** | 1,327 | 19,727 (+213%) | Worst |
+
+How the discovery variants differ:
+
+```mermaid
+flowchart TD
+    P["System prompt lists the API"] --> Q{"discovery"}
+    Q -->|"upfront (default)<br/>all signatures"| W["Model writes the script"]
+    Q -->|"names<br/>names only"| D1["print(describe(fn))<br/>extra model round-trip"]
+    Q -->|"index<br/>YAML: name, description, params"| D2["describe() when unsure<br/>of argument shapes"]
+    D1 --> W
+    D2 --> W
+    W --> X["execute_python"] --> A["Answer"]
+```
+
+`names` and `index` save prompt tokens but push the model into `describe()` lookups, and each
+lookup costs a model round-trip plus the schema text.
 
 - **Give the model the full API up front.** `api=full` doubles the prompt, but with caching
   that costs little, and the model writes correct code on the first try and prints less. A
@@ -65,7 +241,7 @@ calls):
 - **langchain-quickjs 0.4.0 crashes on list-valued JSON Schema `type`**, which the Notion server
   uses. Worked around with `ts_safe_schema` in `bench/ptc.py`.
 - **The Notion server's schemas repeat a shared `$defs` block in every tool**, so one raw
-  `describe()` is about 1,500 tokens. Rendering it as a signature cuts that to 130 to 220.
+  `describe()` is roughly 1,500 tokens (estimated from characters). Rendering it as a signature cuts that to 130 to 220.
 - **PTC's inner MCP calls can be traced:** the bridge passes the run's callbacks into each tool
   call, so they show up in LangSmith and can be counted.
 
