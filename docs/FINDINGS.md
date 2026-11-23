@@ -259,3 +259,6 @@ lookup costs a model round-trip plus the schema text.
 For an agent calling an MCP server with tens of tools: use code mode. Give the model a
 detailed, fully listed API, keep interpreter state for the whole run, and parse tool results
 into native values before the code sees them.
+
+For a design that applies these findings to several agents sharing one full API listing, see
+[MULTI_AGENT.md](MULTI_AGENT.md) (not built or measured).

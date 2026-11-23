@@ -96,3 +96,9 @@ are not planned; they stay as notes for a follow-up (for example the TypeScript 
 1. Mock smoke test: `--server mock --modes ptc --runs 1`
 2. `--tasks lookup aggregate --modes mcp code ptc --runs 1`
 3. Full run: 9 tasks × 3 modes × 5 runs, estimated at $7 to 10. Then the ablations.
+
+## Phase 6 (parked): multi-agent with a full-API code mode
+
+Design in [MULTI_AGENT.md](MULTI_AGENT.md): shared cached listing, permissions in a shared
+bridge, agents as functions in the orchestrator's code, large data through a store. Test it
+against a single `code:api=full` agent on Phase 3 tasks.
