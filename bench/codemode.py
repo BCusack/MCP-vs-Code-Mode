@@ -76,6 +76,83 @@ def signature(namespace: str, tool: McpTool) -> str:
     return f"{sig}\n    \"\"\"{desc}\"\"\"" if desc else sig
 
 
+def _py_type_full(schema: Any, depth: int = 0) -> str:
+    """Nested Python-ish type for `api=full`: inline TypedDict-style dicts, Literals, unions."""
+    if not isinstance(schema, dict):
+        return "Any"
+    if "enum" in schema:
+        vals = schema["enum"][:12]
+        return "Literal[" + ", ".join(repr(v) for v in vals) + (", ..." if len(schema["enum"]) > 12 else "") + "]"
+    for k in ("anyOf", "oneOf"):
+        if k in schema:
+            return " | ".join(dict.fromkeys(_py_type_full(x, depth) for x in schema[k]))
+    t = schema.get("type")
+    if isinstance(t, list):
+        return " | ".join(_py_type_full({**schema, "type": x}, depth) for x in t)
+    if t == "array":
+        return f"list[{_py_type_full(schema.get('items'), depth + 1)}]"
+    if t == "object":
+        props = schema.get("properties") or {}
+        if not props or depth >= 3:
+            return "dict"
+        req = set(schema.get("required") or [])
+        inner = ", ".join(f'"{k}{"" if k in req else "?"}": {_py_type_full(v, depth + 1)}' for k, v in props.items())
+        return "{" + inner + "}"
+    return _JSON_TO_PY.get(t, "Any") if t else "Any"
+
+
+def signature_full(namespace: str, tool: McpTool) -> str:
+    """`api=full`: nested parameter types plus an Args section with each parameter's description.
+
+    Roughly the detail Cloudflare's TS interfaces (with doc comments) and langchain-quickjs's TS
+    signatures give the model, so `compact` vs `full` measures what that detail is worth.
+    """
+    from langchain_core.utils.json_schema import dereference_refs
+
+    schema = dereference_refs(tool.inputSchema or {})
+    props: dict[str, Any] = schema.get("properties", {}) or {}
+    required = set(schema.get("required", []) or [])
+    params, args_doc = [], []
+    for pname, pschema in sorted(props.items(), key=lambda kv: kv[0] not in required):
+        t = _py_type_full(pschema or {})
+        params.append(f"{pname}: {t}" if pname in required else f"{pname}: {t} = None")
+        pdesc = " ".join(str((pschema or {}).get("description", "")).split())[:200]
+        if pdesc:
+            args_doc.append(f"        {pname}: {pdesc}")
+    desc = " ".join((tool.description or "").split())[:300]
+    doc = desc + ("\n    Args:\n" + "\n".join(args_doc) if args_doc else "")
+    sig = f"async def {namespace}.{py_name(tool.name)}({', '.join(params)}) -> Any"
+    return f"{sig}\n    \"\"\"{doc}\"\"\"" if doc else sig
+
+
+def name_line(namespace: str, tool: McpTool) -> str:
+    """`discovery=names`: just the function name and a one-line purpose; details via describe()."""
+    desc = (tool.description or "").strip().splitlines()[0][:120] if tool.description else ""
+    return f"{namespace}.{py_name(tool.name)}" + (f"  # {desc}" if desc else "")
+
+
+def index_entry(namespace: str, tool: McpTool) -> str:
+    """`discovery=index`: a skills-style YAML frontmatter entry, generated from the schema.
+
+    Same one-line description as `name_line` (so `names` vs `index` differs only in format and
+    the parameter names), plus required/optional parameter names. Nothing is hand-written:
+    curated "when to use" text would be prompt tuning that MCP mode doesn't get.
+    """
+    schema = tool.inputSchema or {}
+    props = list((schema.get("properties") or {}).keys())
+    required = [p for p in props if p in set(schema.get("required") or [])]
+    optional = [p for p in props if p not in required]
+    desc = (tool.description or "").strip().splitlines()[0][:120] if tool.description else ""
+    lines = [f"- name: {namespace}.{py_name(tool.name)}"]
+    if desc:
+        lines.append(f"  description: {json.dumps(desc)}")  # JSON string == valid YAML scalar
+    if required:
+        lines.append(f"  required: [{', '.join(required)}]")
+    if optional:
+        lines.append(f"  optional: [{', '.join(optional)}]")
+    return "\n".join(lines)
+
+
 @dataclass
 class McpBridge:
     """Async callables bound to a live MCP session; counts calls that hit the server."""
@@ -108,9 +185,23 @@ class McpBridge:
             raise RuntimeError(f"{tool.name} failed: {str(out)[:2000]}")
         return out
 
+    def tool_for(self, py: str) -> McpTool:
+        """Accepts `fn` or `ns.fn` (the listing shows the qualified name)."""
+        py = py.rsplit(".", 1)[-1]
+        if py not in self.by_py_name:
+            raise KeyError(f"no function {py!r}. Available: {sorted(self.by_py_name)}")
+        return self.by_py_name[py]
+
     def describe(self, py: str) -> str:
-        t = self.by_py_name[py]
-        return json.dumps({"name": py, "description": t.description, "input_schema": t.inputSchema}, indent=1)
+        """`describe=json`: the raw MCP input schema."""
+        t = self.tool_for(py)
+        return json.dumps({"name": py_name(t.name), "description": t.description, "input_schema": t.inputSchema},
+                          indent=1)
+
+    def describe_doc(self, namespace: str, py: str) -> str:
+        """`describe=doc`: a readable page (the skills 'level 2' idea) instead of raw JSON Schema:
+        the `api=full` signature, with nested types and each parameter's description."""
+        return signature_full(namespace, self.tool_for(py))
 
 
 class _Namespace:
@@ -141,7 +232,7 @@ def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
 class CodeRunner:
     """A persistent async 'REPL': variables survive between execute_python calls."""
 
-    def __init__(self, bridge: McpBridge, namespace: str):
+    def __init__(self, bridge: McpBridge, namespace: str, persist: bool = True, describe: str = "json"):
         safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
                          if k not in {"open", "exec", "eval", "compile", "input", "breakpoint", "exit", "quit"}}
         safe_builtins["__import__"] = _safe_import
@@ -149,12 +240,17 @@ class CodeRunner:
         self.globals: dict[str, Any] = {
             "__builtins__": safe_builtins,
             namespace: _Namespace(bridge, namespace),
-            "describe": bridge.describe,
+            "describe": (bridge.describe if describe == "json"
+                         else lambda fn: bridge.describe_doc(namespace, fn)),
             "json": json,
             "asyncio": asyncio,
         }
+        self.persist = persist
+        self._initial = dict(self.globals)
 
     async def run(self, code: str) -> str:
+        if not self.persist:  # `state=fresh`: every call starts from a clean namespace
+            self.globals = dict(self._initial)
         code = textwrap.dedent(code)
         tree = ast.parse(code, mode="exec")
         # Make the last bare expression print itself, like a notebook cell.
@@ -189,28 +285,59 @@ def build_code_tool(runner: CodeRunner) -> StructuredTool:
     async def execute_python(code: str) -> str:
         return await runner.run(code)
 
+    state = ("Variables persist between calls." if runner.persist
+             else "Each call starts fresh: variables do NOT persist between calls.")
     return StructuredTool.from_function(
         coroutine=execute_python,
         name="execute_python",
         description=(
-            "Execute async Python. Top-level `await` works. Variables persist between calls. "
+            f"Execute async Python. Top-level `await` works. {state} "
             "Only printed output (and the value of a final bare expression) is returned to you."
         ),
     )
 
 
-def code_mode_prompt(namespace: str, server_label: str, tools: list[McpTool]) -> str:
-    api = "\n\n".join(signature(namespace, t) for t in tools)
+API_STYLES = ("compact", "full")
+DISCOVERY_STYLES = ("upfront", "names", "index")
+DESCRIBE_STYLES = ("json", "doc")
+
+
+def code_mode_prompt(namespace: str, server_label: str, tools: list[McpTool], *,
+                     api: str = "compact", discovery: str = "upfront", describe: str = "json") -> str:
+    """System-prompt addendum for code mode.
+
+    api: `compact` (one-line stubs, top-level types) or `full` (nested types + per-parameter docs).
+    discovery: `upfront` (every signature listed), `names` (names only; parameters via describe()),
+    or `index` (skills-style YAML frontmatter: name, description, parameter names).
+    describe: what `describe()` returns: `json` (raw input schema) or `doc` (readable signature + Args).
+    """
+    if api not in API_STYLES or discovery not in DISCOVERY_STYLES or describe not in DESCRIBE_STYLES:
+        raise ValueError(f"bad code-mode options api={api!r} discovery={discovery!r} describe={describe!r}")
+    what = "input schema" if describe == "json" else "full signature with parameter types and docs"
+    if discovery == "index":
+        api_text = "```yaml\n" + "\n".join(index_entry(namespace, t) for t in tools) + "\n```"
+        describe_rule = (f"- The API is listed as an index (name, description, parameter names). Run "
+                         f"`print(describe(\"<function>\"))` for a function's {what} before calling it if you are "
+                         f"unsure of argument shapes (you can describe several in one call).")
+    elif discovery == "names":
+        api_text = "\n".join(name_line(namespace, t) for t in tools)
+        describe_rule = (f"- Only function names are listed below. Before calling a function, run "
+                         f"`print(describe(\"<function>\"))` to get its {what} (you can describe several in one call).")
+    else:
+        render = signature_full if api == "full" else signature
+        api_text = "\n\n".join(render(namespace, t) for t in tools)
+        describe_rule = (f"- For a function's {'full input schema' if describe == 'json' else what}, run "
+                         "`print(describe(\"<function>\"))` before you call a function whose arguments you are unsure of.")
     return f"""You can use {server_label} through a Python API, by writing code for the `execute_python` tool.
 
 Rules:
 - Call the API as `await {namespace}.<function>(**kwargs)` (keyword arguments only). Results are parsed JSON (dict/list) or a string.
-- For a function's full input schema, run `print(describe("<function>"))` before you call a function whose arguments you are unsure of.
+{describe_rule}
 - Do filtering, pagination, joins and arithmetic IN CODE. Print only the small result you need, never whole raw API responses.
 - Prefer one script that does several steps over many small calls.
 - Allowed imports: {", ".join(sorted(ALLOWED_IMPORTS))}.
 
 Available API ({len(tools)} functions):
 
-{api}
+{api_text}
 """

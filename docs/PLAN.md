@@ -45,15 +45,39 @@ same rules as `McpBridge`: prefer `structuredContent`, otherwise parse the JSON 
 from the integration gap. `--no-ptc-parse-json` restores the raw behavior as shipped, and each
 result row records which setting was used (`extra.ptc_parse_json`).
 
-## Phase 2: ablations of `code` mode
+## Phase 2: ablations of `code` mode. Status: done, see [FINDINGS.md](FINDINGS.md)
 
-| Flag | Options | Question it answers |
+Variants are mode specs, so they run side by side in one invocation (same MCP session,
+alternating order) and show up as separate columns in the report:
+
+```bash
+uv run bench-run --modes code code:state=fresh code:api=full code:discovery=names \
+  code:discovery=index code:discovery=index,describe=doc --runs 3
+```
+
+| Option | Values (default first) | Question it answers |
 |---|---|---|
-| `--code-state` | `persist` / `fresh` | Does keeping state between calls matter? |
-| `--code-api` | `compact` / `full` | Do full parameter docs in the stubs cut `describe()` calls and errors? |
-| `--code-discovery` | `upfront` / `describe-only` | Is it cheaper to list names first and look up details on demand? |
+| `state` | `persist` / `fresh` | Does keeping state between calls matter? (Cloudflare: fresh; ours and LangChain: kept) |
+| `api` | `compact` / `full` | Do nested types and per-parameter docs reduce `describe()` calls and errors, and what do they cost? |
+| `discovery` | `upfront` / `names` / `index` | Is it cheaper to list names only and look up details with `describe()`? (Cloudflare's current design). `index` lists the API as skills-style YAML frontmatter (name, description, required/optional parameter names) |
+| `describe` | `json` / `doc` | What should `describe()` return: the raw MCP input schema, or a readable page (the `api=full` signature with parameter docs, like a skill's body loaded on demand)? |
 
-The defaults stay as they are today.
+Prompt size on the real Notion tools (24 functions, code-mode addendum only): compact about
+1,080 tokens, `api=full` about 2,780, `discovery=names` about 540, `discovery=index` about 1,000
+(close to compact: it drops types but adds YAML keys). `api=full` gives roughly the detail `ptc`
+shows (TS signatures, about 5.5k tokens for the whole first call), so comparing `code:api=full`
+with `ptc` separates "more API detail" from "JS instead of Python".
+
+`describe()` for one Notion function is about 1,500 tokens as `json` (each tool's schema repeats
+the shared `$defs`) and 130 to 220 as `doc`. The `index` entries are generated from the schemas,
+never hand-written, so code mode gets no prompt tuning that MCP mode lacks.
+
+Without `mcp` in `--modes`, the report uses the first mode as the baseline.
+
+## Status after Phase 2
+
+The project stops here: findings are in [FINDINGS.md](FINDINGS.md). Phases 3 to 5 below
+are not planned; they stay as notes for a follow-up (for example the TypeScript repo).
 
 ## Phase 3: tasks where code mode should matter more
 

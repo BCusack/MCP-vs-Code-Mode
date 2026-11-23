@@ -2,7 +2,7 @@
 
 A personal benchmark comparing **classic MCP tool calling** with **code mode** (the model writes Python against an API generated from the same MCP server). The first target is the official Notion MCP server. The harness is a LangGraph agent on Claude. The output is `results/report.md`.
 
-Open items and history: @docs/HANDOFF.md
+Open items and history: @docs/HANDOFF.md. Results and conclusions: docs/FINDINGS.md (project wrapped up after Phase 2 of docs/PLAN.md).
 
 ## Commands
 
@@ -12,6 +12,7 @@ uv run pytest -q                          # offline tests, no keys, ~5s. Run aft
 uv run bench-run --server mock --runs 1   # offline-data smoke test (still calls Claude: needs ANTHROPIC_API_KEY)
 uv run bench-seed                         # create Notion fixtures (needs NOTION_TOKEN + NOTION_PARENT_PAGE_ID)
 uv run bench-run                          # full run: 6 tasks x 3 modes (mcp, code, ptc) x 3 runs. COSTS MONEY, ask first
+uv run bench-run --modes code code:api=full code:discovery=index,describe=doc --runs 3  # Phase 2 ablation: code-mode variants side by side
 uv run bench-report [results/raw/*.jsonl] # publish results/report.md (bench-run itself writes results/reports/<run>.md)
 uv run bench-seed --teardown              # archive Notion fixtures
 ```

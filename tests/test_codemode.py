@@ -43,3 +43,74 @@ total
         assert (await runner.run("len(rows)")).strip() == "60"
         assert "not allowed" in await runner.run("import os")
         assert "not allowed" in await runner.run("import subprocess")
+
+
+def test_mode_specs():
+    import pytest
+
+    from bench.runner import mode_name, parse_mode
+
+    assert parse_mode("code") == ("code", {"state": "persist", "api": "compact", "discovery": "upfront",
+                                           "describe": "json"})
+    assert parse_mode("code:api=full,state=fresh")[1] == {"state": "fresh", "api": "full", "discovery": "upfront",
+                                                          "describe": "json"}
+    assert mode_name("code:describe=doc,discovery=index") == "code:discovery=index,describe=doc"
+    assert mode_name("code:api=compact") == "code"  # defaults collapse to the plain name
+    assert mode_name("code:api=full,state=fresh") == "code:state=fresh,api=full"  # fixed option order
+    assert mode_name("ptc") == "ptc"
+    for bad in ("code:api=huge", "code:color=red", "mcp:api=full", "nope"):
+        with pytest.raises(ValueError):
+            parse_mode(bad)
+
+
+async def test_code_mode_variants():
+    async with MultiServerMCPClient(CONN).session("mock") as s:
+        tools = (await s.list_tools()).tools
+        compact = code_mode_prompt("notion", "x", tools)
+        full = code_mode_prompt("notion", "x", tools, api="full")
+        names = code_mode_prompt("notion", "x", tools, discovery="names")
+        assert len(full) >= len(compact)  # mock params carry no descriptions; see test_signature_full
+        assert "async def" not in names and "notion.query_data_source  #" in names
+        assert len(names) < len(compact)
+        # the default prompt is unchanged by the describe option
+        assert code_mode_prompt("notion", "x", tools, describe="json") == compact
+
+        # discovery=index: skills-style YAML frontmatter, generated from the schema
+        index = code_mode_prompt("notion", "x", tools, discovery="index")
+        assert "```yaml\n- name: notion." in index and "- name: notion.query_data_source\n  description: " in index
+        assert "  required: [data_source_id]" in index and "async def" not in index
+        assert len(names) < len(index)  # vs compact: see Notion sizes in docs/PLAN.md (mock tools are tiny)
+
+        # describe=doc returns the readable signature, and accepts the qualified name
+        doc = CodeRunner(McpBridge(s, tools), "notion", describe="doc")
+        out = await doc.run('print(describe("notion.query_data_source"))')
+        assert out.startswith("async def notion.query_data_source(data_source_id: str") and "input_schema" not in out
+        raw = CodeRunner(McpBridge(s, tools), "notion")
+        assert '"input_schema"' in await raw.run('print(describe("query_data_source"))')
+
+        fresh = CodeRunner(McpBridge(s, tools), "notion", persist=False)
+        assert (await fresh.run("x = 41\nx + 1")).strip() == "42"
+        assert "NameError" in await fresh.run("x")  # state=fresh: nothing survives between calls
+        assert "dict" in (await fresh.run("type(json.loads('{}')).__name__"))  # base globals still there
+
+
+def test_signature_full():
+    from mcp.types import Tool
+
+    from bench.codemode import signature, signature_full
+
+    t = Tool(name="API-patch-page", description="Notion | Update page properties", inputSchema={
+        "type": "object", "required": ["page_id"],
+        "properties": {
+            "page_id": {"type": "string", "description": "The page ID"},
+            "properties": {"type": "object", "description": "Property values to set",
+                           "properties": {"Status": {"type": "object", "properties": {
+                               "select": {"type": "object", "properties": {"name": {"type": "string"}}}}}}},
+            "archived": {"type": ["boolean", "null"]},
+            "icon": {"enum": ["emoji", "external"]},
+        }})
+    compact, full = signature("notion", t), signature_full("notion", t)
+    assert "properties: dict = None" in compact  # compact stops at the top level
+    assert '{"Status?": {"select?": {"name?": str}}}' in full  # full shows nested shape
+    assert "archived: bool | None = None" in full and "Literal['emoji', 'external']" in full
+    assert "Args:" in full and "page_id: The page ID" in full and "Args:" not in compact

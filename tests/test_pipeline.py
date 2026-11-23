@@ -99,3 +99,20 @@ async def test_pipeline(tmp_path, monkeypatch):
     per_run = build_report([raw], name="r")
     assert per_run == tmp_path / "results" / "reports" / "r.md" and per_run.exists()
     assert (tmp_path / "results" / "reports" / "r.summary.json").exists()
+
+
+def test_report_without_mcp_uses_first_mode_as_baseline(tmp_path, monkeypatch):
+    base = {"server": "mock", "model": "claude-opus-5-5", "task": "aggregate", "run": 1, "success": True,
+            "error": None, "extra": {}, "cost_usd": 0.02, "total_tokens": 1000}
+    from bench.metrics import RunMetrics
+
+    rows = []
+    for mode, cost in (("code", 0.02), ("code:api=full", 0.03)):
+        rm = RunMetrics(server="mock", mode=mode, task="aggregate", model="claude-opus-5-5", run=1)
+        rm.success, rm.cost_usd = True, cost
+        rows.append(rm.to_dict())
+    raw = tmp_path / "r.jsonl"
+    raw.write_text("\n".join(json.dumps(r) for r in rows))
+    monkeypatch.setattr("bench.report.ROOT", tmp_path)
+    md = build_report([raw], name="ablation").read_text()
+    assert "Δ = each mode vs **Code (py)**" in md and "| Δ code:api=full |" in md and "+50%" in md

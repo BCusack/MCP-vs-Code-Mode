@@ -40,6 +40,45 @@ BASE_PROMPT = (
 )
 
 
+# Mode specs: "mcp", "ptc", "code", or a code-mode variant like "code:state=fresh,api=full".
+# Variants run side by side in one invocation (same session, alternating order) for Phase 2 ablations.
+CODE_OPTIONS = {"state": ("persist", "fresh"), "api": ("compact", "full"),
+                "discovery": ("upfront", "names", "index"), "describe": ("json", "doc")}
+CODE_DEFAULTS = {k: v[0] for k, v in CODE_OPTIONS.items()}
+
+
+def parse_mode(spec: str) -> tuple[str, dict[str, str]]:
+    """'code:api=full' -> ('code', {state: persist, api: full, discovery: upfront})."""
+    kind, _, rest = spec.partition(":")
+    if kind not in ("mcp", "code", "ptc"):
+        raise ValueError(f"unknown mode {spec!r}")
+    if kind != "code":
+        if rest:
+            raise ValueError(f"mode {kind!r} takes no options: {spec!r}")
+        return kind, {}
+    opts = dict(CODE_DEFAULTS)
+    for part in filter(None, rest.split(",")):
+        k, _, v = part.partition("=")
+        if k not in CODE_OPTIONS or v not in CODE_OPTIONS[k]:
+            raise ValueError(f"bad code option {part!r}; choose from {CODE_OPTIONS}")
+        opts[k] = v
+    return kind, opts
+
+
+def mode_name(spec: str) -> str:
+    """Canonical name for reports: 'code' for defaults, else 'code:<non-default options>' in fixed order."""
+    kind, opts = parse_mode(spec)
+    diff = [f"{k}={opts[k]}" for k in CODE_OPTIONS if kind == "code" and opts[k] != CODE_DEFAULTS[k]]
+    return kind + (":" + ",".join(diff) if diff else "")
+
+
+def _mode_arg(spec: str) -> str:
+    try:
+        return mode_name(spec)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
 def make_model(model: str, effort: str) -> ChatAnthropic:
     return ChatAnthropic(model=model, max_tokens=16_000, reasoning_effort=effort, max_retries=4)
 
@@ -52,13 +91,17 @@ async def run_one(*, spec: ServerSpec, session, mode: str, task: Task, ctx: Ctx,
     bridge = None
     counter = McpCallCounter({t.name for t in mcp_tools})
     middleware: list = [AnthropicPromptCachingMiddleware(ttl="5m")] if cache else []
-    if mode == "mcp":
+    kind, opts = parse_mode(mode)
+    if kind == "mcp":
         tools = mcp_tools
-    elif mode == "code":
+    elif kind == "code":
         bridge = McpBridge(session, raw_tools)
-        tools = [build_code_tool(CodeRunner(bridge, spec.namespace))]
-        system += "\n\n" + code_mode_prompt(spec.namespace, spec.label, raw_tools)
-    elif mode == "ptc":
+        tools = [build_code_tool(CodeRunner(bridge, spec.namespace, persist=opts["state"] == "persist",
+                                            describe=opts["describe"]))]
+        system += "\n\n" + code_mode_prompt(spec.namespace, spec.label, raw_tools, api=opts["api"],
+                                              discovery=opts["discovery"], describe=opts["describe"])
+        rm.extra["code_options"] = opts
+    elif kind == "ptc":
         tools = []  # the middleware adds `eval`; MCP tools are reachable only from code
         middleware.append(build_ptc_middleware(mcp_tools, parse_json=ptc_parse_json))
         rm.extra["ptc_parse_json"] = ptc_parse_json
@@ -84,9 +127,9 @@ async def run_one(*, spec: ServerSpec, session, mode: str, task: Task, ctx: Ctx,
         rm.error = f"{type(e).__name__}: {e}"[:500]
     rm.wall_seconds = round(time.perf_counter() - t0, 2)
     fill_from_messages(rm, messages)
-    if mode == "mcp":
+    if kind == "mcp":
         rm.mcp_calls = rm.agent_tool_calls
-    elif mode == "code":
+    elif kind == "code":
         rm.mcp_calls = bridge.calls
         rm.extra["mcp_errors_inside_code"] = bridge.errors
     else:  # ptc: counted from tool callbacks fired inside eval
@@ -140,7 +183,8 @@ async def main_async(a: argparse.Namespace) -> Path:
                                            ptc_parse_json=a.ptc_parse_json)
                         if capture is not None and capture.system is not None:
                             captured.add(mode)
-                            p = ROOT / "results" / "prompts" / f"{spec.name}_{mode}.md"
+                            safe = mode.replace(":", "__").replace(",", "_").replace("=", "-")
+                            p = ROOT / "results" / "prompts" / f"{spec.name}_{safe}.md"
                             p.parent.mkdir(parents=True, exist_ok=True)
                             p.write_text(capture.as_markdown(mode))
                         f.write(json.dumps(rm.to_dict()) + "\n")
@@ -159,7 +203,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--server", default="notion")
     ap.add_argument("--tasks", nargs="*", help="task ids (default: all for the server)")
-    ap.add_argument("--modes", nargs="*", default=["mcp", "code", "ptc"], choices=["mcp", "code", "ptc"])
+    ap.add_argument("--modes", nargs="*", type=_mode_arg, default=["mcp", "code", "ptc"],
+                    help="mcp | ptc | code[:state=persist|fresh,api=compact|full,"
+                         "discovery=upfront|names|index,describe=json|doc]")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--ptc-parse-json", action=argparse.BooleanOptionalAction, default=True,
                     help="ptc mode: give code parsed JSON from MCP tools, like code mode (default on)")
