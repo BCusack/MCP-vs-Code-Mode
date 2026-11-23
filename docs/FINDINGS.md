@@ -34,6 +34,22 @@ flowchart LR
     S --> NS["@notionhq/notion-mcp-server<br/>(npx)"]
 ```
 
+### What "code mode" means here (the default)
+
+Unless a variant is named, **code mode** means this setup. Section 1 compares it with MCP and
+`ptc`. Section 2 changes one setting at a time and reports each variant against it.
+
+| Setting | Default (`code`) | Ablation variants (section 2) |
+|---|---|---|
+| API listing (`api`) | `compact`: one-line Python stub per function, top-level parameter types, one-line description | `full`: nested parameter types plus each parameter's description |
+| Discovery (`discovery`) | `upfront`: all 24 functions listed in the system prompt | `names`: names only; `index`: skills-style YAML (name, description, parameter names). Details come from `describe()` |
+| `describe("fn")` returns | `json`: the raw MCP input schema | `doc`: a readable signature with each parameter's description |
+| Interpreter state (`state`) | `persist`: variables persist between `execute_python` calls in a run | `fresh`: wiped before every call |
+| Tool results | parsed from JSON into Python dicts and lists before the code sees them | (not varied) |
+
+On the command line, `--modes code` runs this default; a variant is written as
+`code:api=full` or `code:discovery=index,describe=doc`.
+
 The core difference, on a task that has to page through a database and add up a column:
 
 ```mermaid
@@ -189,10 +205,11 @@ xychart-beta
     bar [-13, 8, 8, 10, 25, 57]
 ```
 
-Change against default `code` mode (compact stubs, all functions listed, variables kept between
-calls):
+Each `code:` variant changes one setting of default code mode (`ptc` is shown for reference; see [What "code mode" means
+here](#what-code-mode-means-here-the-default)). **Cost Δ is against default code mode, not MCP**;
+every variant still cost less than MCP mode.
 
-| Variant | Cost Δ | First-call input | Tool output into context | Verdict |
+| Variant | Cost Δ vs default code | First-call input | Tool output into context | Verdict |
 |---|---:|---:|---:|---|
 | `api=full`: nested types plus per-parameter docs | **-13%** | 4,448 (+109%) | 3,216 (-49%) | Cheapest overall, and on 4 of 6 tasks (all the multi-call ones) |
 | `discovery=index`: skills-style YAML frontmatter | +8% | 2,007 | 8,087 | No gain |
