@@ -95,3 +95,7 @@ async def test_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr("bench.report.ROOT", tmp_path)
     md = build_report([raw]).read_text()
     assert "## Headline" in md and "| aggregate | code |" in md
+    # per-run reports (what bench-run writes) never touch the published report
+    per_run = build_report([raw], name="r")
+    assert per_run == tmp_path / "results" / "reports" / "r.md" and per_run.exists()
+    assert (tmp_path / "results" / "reports" / "r.summary.json").exists()

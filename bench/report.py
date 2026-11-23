@@ -58,7 +58,13 @@ def _fmt(fmt: str, v: float) -> str:
     return fmt.format(v)
 
 
-def build_report(paths: list[Path]) -> Path:
+def build_report(paths: list[Path], name: str | None = None) -> Path:
+    """Write a report for `paths`.
+
+    With `name`, writes `results/reports/<name>.md` (+ `.summary.json`): used by `bench-run`
+    so a smoke test never replaces the published report. Without it, writes the published
+    `results/report.md` and `results/summary.json` (what `bench-report` does).
+    """
     rows = _load(paths)
     if not rows:
         raise SystemExit("no rows")
@@ -152,9 +158,13 @@ def build_report(paths: list[Path]) -> Path:
              "- Small run counts are noisy. Use `--runs 5` or more before drawing conclusions.\n")
 
     res = ROOT / "results"
-    res.mkdir(exist_ok=True)
-    (res / "summary.json").write_text(json.dumps(summary, indent=2))
-    md = res / "report.md"
+    if name:
+        res = res / "reports"
+        md, sj = res / f"{name}.md", res / f"{name}.summary.json"
+    else:
+        md, sj = res / "report.md", res / "summary.json"
+    res.mkdir(parents=True, exist_ok=True)
+    sj.write_text(json.dumps(summary, indent=2))
     md.write_text("\n".join(L))
     return md
 

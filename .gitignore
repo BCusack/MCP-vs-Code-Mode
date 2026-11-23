@@ -14,6 +14,7 @@ secrets/
 
 # raw run output (may contain workspace content); reports are opt-in
 results/raw/
+results/reports/
 
 # python / uv
 __pycache__/

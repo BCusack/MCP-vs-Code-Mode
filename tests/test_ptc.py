@@ -61,3 +61,29 @@ def test_parse_mcp_content():
     assert parse_mcp_content('{"a": 1}') == {"a": 1}
     assert parse_mcp_content([{"type": "text", "text": "not json"}]) == "not json"
     assert parse_mcp_content([], {"structured_content": {"b": 2}}) == {"b": 2}
+
+
+def test_ts_safe_schema_renders_list_types():
+    """langchain-quickjs 0.4.0 crashes rendering `type: [..]` (Notion MCP uses it)."""
+    import pytest
+    from langchain_core.tools import StructuredTool
+    from langchain_quickjs._prompt import render_ptc_prompt
+
+    from bench.ptc import _with_ts_safe_schema, ts_safe_schema
+
+    schema = {"type": "object", "required": ["id"], "properties": {
+        "id": {"type": "string"},
+        "after": {"type": ["string", "null"], "description": "cursor"},
+        "children": {"type": "array", "items": {"type": ["object", "null"],
+                                                "properties": {"x": {"type": "integer"}}}},
+    }}
+
+    async def noop(**kw):
+        return None
+
+    tool = StructuredTool(name="patch_block", description="d", args_schema=schema, coroutine=noop)
+    with pytest.raises(TypeError):  # documents the upstream bug; drop when fixed
+        render_ptc_prompt([tool])
+    out = render_ptc_prompt([_with_ts_safe_schema(tool)])
+    assert "after?: string | null" in out and "x?: number" in out
+    assert ts_safe_schema({"type": ["string", "null"], "anyOf": [{"type": "string"}]}) == {"anyOf": [{"type": "string"}]}
