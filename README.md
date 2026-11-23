@@ -2,7 +2,7 @@
 
 A small personal benchmark: does **code mode** beat **classic MCP tool calling**?
 
-**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain PTC) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants).
+**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Multi-agent design (not built): [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain PTC) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants).
 
 Both modes use the **same LangGraph agent** (`langchain.agents.create_agent`), the **same Claude model**, the **same MCP server** (the official Notion MCP server), and the **same tasks**. Only the way the model reaches the tools differs.
 
