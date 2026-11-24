@@ -43,24 +43,31 @@ BASE_PROMPT = (
 # Mode specs: "mcp", "ptc", "code", or a code-mode variant like "code:state=fresh,api=full".
 # Variants run side by side in one invocation (same session, alternating order) for Phase 2 ablations.
 CODE_OPTIONS = {"state": ("persist", "fresh"), "api": ("compact", "full"),
-                "discovery": ("upfront", "names", "index"), "describe": ("json", "doc")}
+                "discovery": ("upfront", "names", "index", "search"), "describe": ("json", "doc")}
 CODE_DEFAULTS = {k: v[0] for k, v in CODE_OPTIONS.items()}
+PTC_OPTIONS = {"state": ("persist", "fresh")}  # fresh = langchain-quickjs mode="call"
+MODE_OPTIONS = {"code": CODE_OPTIONS, "ptc": PTC_OPTIONS, "mcp": {}}
+
+# Emulations of Cloudflare's @cloudflare/codemode designs, inside this harness (same agent, prompt
+# base and MCP session). Stateless `createCodeTool`: all TypeScript types up front, JS, a fresh
+# isolate per execution. Durable runtime: only the namespace is listed; the model finds functions
+# with search() and reads them with describe(); a fresh sandbox per execution.
+ALIASES = {"cf-stateless": "ptc:state=fresh",
+           "cf-durable": "code:discovery=search,describe=doc,state=fresh"}
 
 
 def parse_mode(spec: str) -> tuple[str, dict[str, str]]:
-    """'code:api=full' -> ('code', {state: persist, api: full, discovery: upfront})."""
+    """'code:api=full' -> ('code', {state: persist, api: full, discovery: upfront, ...})."""
+    spec = ALIASES.get(spec, spec)
     kind, _, rest = spec.partition(":")
-    if kind not in ("mcp", "code", "ptc"):
+    if kind not in MODE_OPTIONS:
         raise ValueError(f"unknown mode {spec!r}")
-    if kind != "code":
-        if rest:
-            raise ValueError(f"mode {kind!r} takes no options: {spec!r}")
-        return kind, {}
-    opts = dict(CODE_DEFAULTS)
+    allowed = MODE_OPTIONS[kind]
+    opts = {k: v[0] for k, v in allowed.items()}
     for part in filter(None, rest.split(",")):
         k, _, v = part.partition("=")
-        if k not in CODE_OPTIONS or v not in CODE_OPTIONS[k]:
-            raise ValueError(f"bad code option {part!r}; choose from {CODE_OPTIONS}")
+        if k not in allowed or v not in allowed[k]:
+            raise ValueError(f"bad {kind} option {part!r}; choose from {allowed or 'none'}")
         opts[k] = v
     return kind, opts
 
@@ -68,7 +75,8 @@ def parse_mode(spec: str) -> tuple[str, dict[str, str]]:
 def mode_name(spec: str) -> str:
     """Canonical name for reports: 'code' for defaults, else 'code:<non-default options>' in fixed order."""
     kind, opts = parse_mode(spec)
-    diff = [f"{k}={opts[k]}" for k in CODE_OPTIONS if kind == "code" and opts[k] != CODE_DEFAULTS[k]]
+    allowed = MODE_OPTIONS[kind]
+    diff = [f"{k}={opts[k]}" for k in allowed if opts[k] != allowed[k][0]]
     return kind + (":" + ",".join(diff) if diff else "")
 
 
@@ -97,14 +105,16 @@ async def run_one(*, spec: ServerSpec, session, mode: str, task: Task, ctx: Ctx,
     elif kind == "code":
         bridge = McpBridge(session, raw_tools)
         tools = [build_code_tool(CodeRunner(bridge, spec.namespace, persist=opts["state"] == "persist",
-                                            describe=opts["describe"]))]
+                                            describe=opts["describe"], search=opts["discovery"] == "search"))]
         system += "\n\n" + code_mode_prompt(spec.namespace, spec.label, raw_tools, api=opts["api"],
                                               discovery=opts["discovery"], describe=opts["describe"])
         rm.extra["code_options"] = opts
     elif kind == "ptc":
         tools = []  # the middleware adds `eval`; MCP tools are reachable only from code
-        middleware.append(build_ptc_middleware(mcp_tools, parse_json=ptc_parse_json))
+        middleware.append(build_ptc_middleware(mcp_tools, parse_json=ptc_parse_json,
+                                               persist=opts["state"] == "persist"))
         rm.extra["ptc_parse_json"] = ptc_parse_json
+        rm.extra["ptc_options"] = opts
     else:
         raise ValueError(f"unknown mode {mode!r}")
     if capture is not None:
@@ -204,8 +214,8 @@ def main() -> None:
     ap.add_argument("--server", default="notion")
     ap.add_argument("--tasks", nargs="*", help="task ids (default: all for the server)")
     ap.add_argument("--modes", nargs="*", type=_mode_arg, default=["mcp", "code", "ptc"],
-                    help="mcp | ptc | code[:state=persist|fresh,api=compact|full,"
-                         "discovery=upfront|names|index,describe=json|doc]")
+                    help="mcp | ptc[:state=persist|fresh] | code[:state=persist|fresh,api=compact|full,"
+                         "discovery=upfront|names|index|search,describe=json|doc] | cf-stateless | cf-durable")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--ptc-parse-json", action=argparse.BooleanOptionalAction, default=True,
                     help="ptc mode: give code parsed JSON from MCP tools, like code mode (default on)")

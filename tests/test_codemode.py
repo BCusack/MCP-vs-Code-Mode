@@ -114,3 +114,37 @@ def test_signature_full():
     assert '{"Status?": {"select?": {"name?": str}}}' in full  # full shows nested shape
     assert "archived: bool | None = None" in full and "Literal['emoji', 'external']" in full
     assert "Args:" in full and "page_id: The page ID" in full and "Args:" not in compact
+
+
+def test_cloudflare_mode_specs():
+    import pytest
+
+    from bench.runner import mode_name, parse_mode
+
+    assert parse_mode("ptc") == ("ptc", {"state": "persist"})
+    assert mode_name("ptc:state=persist") == "ptc"
+    assert mode_name("cf-stateless") == "ptc:state=fresh"
+    assert mode_name("cf-durable") == "code:state=fresh,discovery=search,describe=doc"
+    with pytest.raises(ValueError):
+        parse_mode("ptc:api=full")
+
+
+async def test_discovery_search():
+    async with MultiServerMCPClient(CONN).session("mock") as s:
+        tools = (await s.list_tools()).tools
+        prompt = code_mode_prompt("notion", "x", tools, discovery="search")
+        assert "async def" not in prompt and "search(" in prompt
+        assert "notion.query_data_source" not in prompt  # nothing listed up front
+
+        r = CodeRunner(McpBridge(s, tools), "notion", persist=False, describe="doc", search=True)
+        out = await r.run('print(search("query data source rows"))')
+        assert out.splitlines()[0].startswith("notion.query_data_source")  # best match ranks first
+        assert "no functions match" in await r.run('print(search("zzzz"))')
+        assert "NameError" in await CodeRunner(McpBridge(s, tools), "notion").run("search('x')")  # only when enabled
+
+
+def test_ptc_fresh_state_uses_call_mode():
+    from bench.ptc import build_ptc_middleware
+
+    assert build_ptc_middleware([], persist=False)._mode == "call"  # fresh QuickJS REPL per eval
+    assert build_ptc_middleware([])._mode == "turn"

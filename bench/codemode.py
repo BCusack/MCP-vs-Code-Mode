@@ -192,6 +192,30 @@ class McpBridge:
             raise KeyError(f"no function {py!r}. Available: {sorted(self.by_py_name)}")
         return self.by_py_name[py]
 
+    def search(self, namespace: str, query: str, limit: int = 8) -> str:
+        """`discovery=search`: rank functions by keyword overlap with the query, like Cloudflare's
+        `codemode.search()`. A query word found in the function's name or description scores 2, in a
+        parameter name 1. Ties go to the more specific function (fewer words of its own)."""
+        stop = {"a", "an", "the", "of", "to", "in", "for", "on", "by", "with", "and", "or", "is", "it", namespace}
+        toks = lambda text: {w[:-1] if len(w) > 3 and w.endswith("s") else w  # noqa: E731  (blocks -> block)
+                             for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in stop}
+        words = toks(query)
+        scored = []
+        for py, t in self.by_py_name.items():
+            text = toks(py.replace("_", " ") + " " + (t.description or ""))
+            params = {w for p in ((t.inputSchema or {}).get("properties") or {}) for w in toks(p.replace("_", " "))}
+            score = sum(2 * (w in text) + (w in params and w not in text) for w in words)
+            if score:
+                scored.append((-score, len(text), py))
+        if not scored:
+            return f"no functions match {query!r}; try other words (e.g. what the function acts on)"
+        lines = []
+        for *_, py in sorted(scored)[:limit]:
+            t = self.by_py_name[py]
+            desc = (t.description or "").strip().splitlines()[0][:120] if t.description else ""
+            lines.append(f"{namespace}.{py}" + (f"  # {desc}" if desc else ""))
+        return "\n".join(lines)
+
     def describe(self, py: str) -> str:
         """`describe=json`: the raw MCP input schema."""
         t = self.tool_for(py)
@@ -232,7 +256,8 @@ def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
 class CodeRunner:
     """A persistent async 'REPL': variables survive between execute_python calls."""
 
-    def __init__(self, bridge: McpBridge, namespace: str, persist: bool = True, describe: str = "json"):
+    def __init__(self, bridge: McpBridge, namespace: str, persist: bool = True, describe: str = "json",
+                 search: bool = False):
         safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
                          if k not in {"open", "exec", "eval", "compile", "input", "breakpoint", "exit", "quit"}}
         safe_builtins["__import__"] = _safe_import
@@ -245,6 +270,8 @@ class CodeRunner:
             "json": json,
             "asyncio": asyncio,
         }
+        if search:  # `discovery=search`
+            self.globals["search"] = lambda query, limit=8: bridge.search(namespace, query, limit)
         self.persist = persist
         self._initial = dict(self.globals)
 
@@ -298,7 +325,7 @@ def build_code_tool(runner: CodeRunner) -> StructuredTool:
 
 
 API_STYLES = ("compact", "full")
-DISCOVERY_STYLES = ("upfront", "names", "index")
+DISCOVERY_STYLES = ("upfront", "names", "index", "search")
 DESCRIBE_STYLES = ("json", "doc")
 
 
@@ -308,7 +335,8 @@ def code_mode_prompt(namespace: str, server_label: str, tools: list[McpTool], *,
 
     api: `compact` (one-line stubs, top-level types) or `full` (nested types + per-parameter docs).
     discovery: `upfront` (every signature listed), `names` (names only; parameters via describe()),
-    or `index` (skills-style YAML frontmatter: name, description, parameter names).
+    `index` (skills-style YAML frontmatter: name, description, parameter names), or `search`
+    (nothing listed; the model finds functions with search(), like Cloudflare's durable codemode runtime).
     describe: what `describe()` returns: `json` (raw input schema) or `doc` (readable signature + Args).
     """
     if api not in API_STYLES or discovery not in DISCOVERY_STYLES or describe not in DESCRIBE_STYLES:
@@ -319,6 +347,11 @@ def code_mode_prompt(namespace: str, server_label: str, tools: list[McpTool], *,
         describe_rule = (f"- The API is listed as an index (name, description, parameter names). Run "
                          f"`print(describe(\"<function>\"))` for a function's {what} before calling it if you are "
                          f"unsure of argument shapes (you can describe several in one call).")
+    elif discovery == "search":
+        api_text = (f"(not listed: {len(tools)} functions under `{namespace}`. Find them with search().)")
+        describe_rule = (f"- The functions are not listed. Run `print(search(\"<what you need, in words>\"))` to find "
+                         f"functions (ranked names with one-line descriptions), then `print(describe(\"<function>\"))` "
+                         f"for its {what} before calling it. You can search and describe several in one call.")
     elif discovery == "names":
         api_text = "\n".join(name_line(namespace, t) for t in tools)
         describe_rule = (f"- Only function names are listed below. Before calling a function, run "

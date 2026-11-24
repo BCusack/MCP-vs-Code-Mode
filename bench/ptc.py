@@ -99,13 +99,16 @@ def _with_ts_safe_schema(tool: BaseTool) -> BaseTool:
     return tool
 
 
-def build_ptc_middleware(mcp_tools: list[BaseTool], *, parse_json: bool = True) -> CodeInterpreterMiddleware:
+def build_ptc_middleware(mcp_tools: list[BaseTool], *, parse_json: bool = True,
+                         persist: bool = True) -> CodeInterpreterMiddleware:
+    """`persist=False` (`ptc:state=fresh`): a fresh QuickJS REPL per eval, like Cloudflare's
+    stateless `createCodeTool` (a new isolate per execution, all TypeScript types up front)."""
     tools = [with_parsed_json(t) for t in mcp_tools] if parse_json else list(mcp_tools)
     return CodeInterpreterMiddleware(
         ptc=[_with_ts_safe_schema(t) for t in tools],
         timeout=float(EXEC_TIMEOUT_S),  # default 5s is too short for real API calls
         max_result_chars=MAX_OUTPUT_CHARS,  # default 4000; match code mode
-        mode="turn",  # one run == one turn; state persists across evals within it
+        mode="turn" if persist else "call",  # turn: state persists across evals in a run; call: fresh each eval
         subagents=False,  # no `task()` global: keep the surface equal to code mode
     )
 
