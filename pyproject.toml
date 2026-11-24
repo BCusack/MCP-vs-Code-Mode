@@ -20,6 +20,7 @@ dependencies = [
 bench-seed = "bench.seed_notion:main"
 bench-run = "bench.runner:main"
 bench-report = "bench.report:main"
+bench-stats = "bench.stats:main"
 
 [build-system]
 requires = ["hatchling"]

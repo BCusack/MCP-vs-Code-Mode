@@ -28,7 +28,7 @@ def get_server(name: str) -> ServerSpec:
             connection={
                 "transport": "stdio",
                 "command": "npx",
-                "args": ["-y", "@notionhq/notion-mcp-server"],
+                "args": ["-y", "@notionhq/notion-mcp-server@2.6.1"],  # version the published results ran on
                 # Passed only to the child process; never logged or written to results.
                 # The MCP SDK merges this over its safe default env (HOME, PATH, ...),
                 # so other secrets (ANTHROPIC_API_KEY, LANGSMITH_*) stay out of the child.
