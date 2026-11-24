@@ -15,7 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # (key, label, lower_is_better, fmt)
-MODE_LABELS = {"mcp": "MCP", "code": "Code (py)", "ptc": "PTC (js)"}
+MODE_LABELS = {"mcp": "MCP", "code": "Code (py)", "ptc": "PTC (js)",
+               # emulations of Cloudflare's @cloudflare/codemode designs (see runner.ALIASES)
+               "ptc:state=fresh": "CF stateless (js)",
+               "code:state=fresh,discovery=search,describe=doc": "CF durable (py)"}
 # code: our Python execute_python + generated stubs. ptc: langchain-quickjs CodeInterpreterMiddleware.
 
 METRICS = [

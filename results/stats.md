@@ -72,3 +72,76 @@ Base: **Code (py)**. Mean per task run (tasks weighted equally) with a 95% strat
 | code:discovery=names | 18 | 10.9 | 10.5 to 11.3 | 9.7 | +9% | +3% to +16% | 3/6 |
 | code:state=fresh | 18 | 9.9 | 9.6 to 10.3 | 9.9 | +0% | -5% to +5% | 3/6 |
 
+
+# Cloudflare emulation run (2026-11-24)
+
+Same session for all five modes: MCP, default code, PTC, and the two Cloudflare emulations (`cf-stateless` = `ptc:state=fresh`, `cf-durable` = `code:discovery=search,describe=doc,state=fresh`). Report: `cloudflare_report.md`.
+
+## Confidence intervals: 20261124T011144Z_notion.jsonl
+
+Base: **Code (py)**. Mean per task run (tasks weighted equally) with a 95% stratified bootstrap CI; Δ is against the base, with its own 95% CI. "Tasks better" counts tasks where the mode's mean is lower than the base's. A Δ CI that crosses 0% is a tie.
+
+### Cost (USD)
+
+| Mode | Runs | Mean | 95% CI | Median | Δ vs base | Δ 95% CI | Tasks better |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MCP | 18 | $0.0817 | $0.0542 to $0.0989 | $0.0516 | +139% | +62% to +207% | 1/6 |
+| Code (py) | 18 | $0.0342 | $0.0302 to $0.0381 | $0.0329 | base | |  |
+| PTC (js) | 18 | $0.0472 | $0.0413 to $0.0534 | $0.0468 | +38% | +16% to +65% | 1/6 |
+| CF stateless (js) | 18 | $0.0500 | $0.0457 to $0.0550 | $0.0414 | +46% | +26% to +71% | 1/6 |
+| CF durable (py) | 18 | $0.0329 | $0.0308 to $0.0352 | $0.0294 | -4% | -15% to +11% | 3/6 |
+
+### Total tokens
+
+| Mode | Runs | Mean | 95% CI | Median | Δ vs base | Δ 95% CI | Tasks better |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MCP | 18 | 57,020 | 40,956 to 65,186 | 37,648 | +213% | +128% to +270% | 0/6 |
+| Code (py) | 18 | 18,213 | 17,371 to 19,018 | 18,876 | base | |  |
+| PTC (js) | 18 | 26,623 | 23,991 to 29,208 | 20,042 | +46% | +30% to +62% | 0/6 |
+| CF stateless (js) | 18 | 27,798 | 26,393 to 29,273 | 25,474 | +53% | +42% to +64% | 0/6 |
+| CF durable (py) | 18 | 13,507 | 13,055 to 13,968 | 11,206 | -26% | -30% to -21% | 4/6 |
+
+### Wall time (s)
+
+| Mode | Runs | Mean | 95% CI | Median | Δ vs base | Δ 95% CI | Tasks better |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MCP | 18 | 9.5 | 8.9 to 10.1 | 8.8 | -14% | -21% to -6% | 5/6 |
+| Code (py) | 18 | 11.1 | 10.5 to 11.8 | 10.9 | base | |  |
+| PTC (js) | 18 | 11.9 | 11.3 to 12.6 | 12.6 | +8% | -1% to +16% | 2/6 |
+| CF stateless (js) | 18 | 11.8 | 11.2 to 12.6 | 10.6 | +7% | -2% to +16% | 3/6 |
+| CF durable (py) | 18 | 15.0 | 14.2 to 15.9 | 14.3 | +36% | +24% to +47% | 1/6 |
+
+## Confidence intervals: 20261124T011144Z_notion.jsonl
+
+Base: **MCP**. Mean per task run (tasks weighted equally) with a 95% stratified bootstrap CI; Δ is against the base, with its own 95% CI. "Tasks better" counts tasks where the mode's mean is lower than the base's. A Δ CI that crosses 0% is a tie.
+
+### Cost (USD)
+
+| Mode | Runs | Mean | 95% CI | Median | Δ vs base | Δ 95% CI | Tasks better |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MCP | 18 | $0.0817 | $0.0542 to $0.0989 | $0.0516 | base | |  |
+| Code (py) | 18 | $0.0342 | $0.0302 to $0.0381 | $0.0329 | -58% | -67% to -38% | 5/6 |
+| PTC (js) | 18 | $0.0472 | $0.0413 to $0.0534 | $0.0468 | -42% | -55% to -15% | 4/6 |
+| CF stateless (js) | 18 | $0.0500 | $0.0457 to $0.0550 | $0.0414 | -39% | -52% to -9% | 4/6 |
+| CF durable (py) | 18 | $0.0329 | $0.0308 to $0.0352 | $0.0294 | -60% | -67% to -40% | 6/6 |
+
+### Total tokens
+
+| Mode | Runs | Mean | 95% CI | Median | Δ vs base | Δ 95% CI | Tasks better |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MCP | 18 | 57,020 | 40,956 to 65,186 | 37,648 | base | |  |
+| Code (py) | 18 | 18,213 | 17,371 to 19,018 | 18,876 | -68% | -73% to -56% | 6/6 |
+| PTC (js) | 18 | 26,623 | 23,991 to 29,208 | 20,042 | -53% | -62% to -37% | 6/6 |
+| CF stateless (js) | 18 | 27,798 | 26,393 to 29,273 | 25,474 | -51% | -59% to -33% | 6/6 |
+| CF durable (py) | 18 | 13,507 | 13,055 to 13,968 | 11,206 | -76% | -80% to -67% | 6/6 |
+
+### Wall time (s)
+
+| Mode | Runs | Mean | 95% CI | Median | Δ vs base | Δ 95% CI | Tasks better |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MCP | 18 | 9.5 | 8.9 to 10.1 | 8.8 | base | |  |
+| Code (py) | 18 | 11.1 | 10.5 to 11.8 | 10.9 | +16% | +7% to +27% | 1/6 |
+| PTC (js) | 18 | 11.9 | 11.3 to 12.6 | 12.6 | +25% | +15% to +36% | 2/6 |
+| CF stateless (js) | 18 | 11.8 | 11.2 to 12.6 | 10.6 | +24% | +14% to +36% | 2/6 |
+| CF durable (py) | 18 | 15.0 | 14.2 to 15.9 | 14.3 | +57% | +45% to +71% | 0/6 |
+
