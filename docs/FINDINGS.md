@@ -186,12 +186,21 @@ xychart-beta
 | First-call input (tokens) | 8,942 | 2,132 | 5,474 |
 | Wall time (s) | 7.7 | 9.8 | 10.9 |
 | Success | 100% | 100% | 100% |
+| Cost Δ vs MCP, 95% CI | | -62% to -28% | -57% to -17% |
+| Tasks cheaper than MCP | | 5 of 6 | 4 of 6 |
+
+95% CIs come from a stratified bootstrap over the existing runs (`uv run bench-stats`, full
+tables in [`results/stats.md`](../results/stats.md)). Both code modes are clearly cheaper than
+MCP and clearly slower.
 
 - **The saving comes from two places.** The prompt is smaller (one code tool and an API listing,
   instead of 24 JSON schemas), and raw API responses stay in the interpreter instead of going
   into the model's context.
 - **The bigger the task, the bigger the win.** On `write` (several API calls), MCP used 156k
   tokens and $0.25 per run. Code mode used 24k tokens and $0.05 (-80%).
+- **That one task carries a lot of the average.** Leave `write` out and code mode is about 23%
+  cheaper than MCP, not 53%, and the median run is 21% cheaper ($0.033 vs $0.043). Code mode
+  cost *more* than MCP on `aggregate` ($0.049 vs $0.032 per run). Tokens are the steadier signal: code mode used fewer on all 6 tasks.
 - **Code mode is slower** (+27% wall time for Python, +42% for PTC). It makes fewer model
   calls, but each one writes code that then has to run. Here it trades seconds for dollars.
 
@@ -211,12 +220,12 @@ every variant still cost less than MCP mode.
 
 | Variant | Cost Δ vs default code | First-call input | Tool output into context | Verdict |
 |---|---:|---:|---:|---|
-| `api=full`: nested types plus per-parameter docs | **-13%** | 4,448 (+109%) | 3,216 (-49%) | Cheapest overall, and on 4 of 6 tasks (all the multi-call ones) |
-| `discovery=index`: skills-style YAML frontmatter | +8% | 2,007 | 8,087 | No gain |
-| `discovery=index,describe=doc`: plus a readable `describe()` | +8% | 2,016 | 8,503 | No gain |
-| `state=fresh`: variables wiped between calls (Cloudflare's model) | +10% | 2,145 | 8,428 | Keeping state is slightly better |
-| `ptc`: LangChain `langchain-quickjs` | +25% | 5,474 | 5,582 | Costs more than our Python |
-| `discovery=names`: names only, details through `describe()` | **+57%** | 1,327 | 19,727 (+213%) | Worst |
+| `api=full`: nested types plus per-parameter docs | **-13%** (CI -28% to +3%) | 4,448 (+109%) | 3,216 (-49%) | Lowest mean, cheaper on 4 of 6 tasks (all the multi-call ones). Likely better, not proven |
+| `discovery=index`: skills-style YAML frontmatter | +8% (CI -4% to +22%) | 2,007 | 8,087 | No gain |
+| `discovery=index,describe=doc`: plus a readable `describe()` | +8% (CI -6% to +25%) | 2,016 | 8,503 | No gain |
+| `state=fresh`: variables wiped between calls (Cloudflare's model) | +10% (CI -4% to +25%) | 2,145 | 8,428 | Tie; leans toward keeping state |
+| `ptc`: LangChain `langchain-quickjs` | **+25%** (CI +3% to +49%) | 5,474 | 5,582 | Costs more than our Python |
+| `discovery=names`: names only, details through `describe()` | **+57%** (CI +29% to +88%) | 1,327 | 19,727 (+213%) | Worst, clearly |
 
 How the discovery variants differ:
 
@@ -235,10 +244,12 @@ flowchart TD
 lookup costs a model round-trip plus the schema text.
 
 - **Give the model the full API up front.** `api=full` doubles the prompt, but with caching
-  that costs little, and the model writes correct code on the first try and prints less. A
-  more detailed API is worth paying for.
-- **Lazy discovery (Cloudflare's current design, skills-style progressive disclosure) loses at
-  this size.** Each `describe()` round adds a model call and brings schema text into context.
+  that costs little, and the model printed half as much tool output. It had the lowest mean
+  cost, but its CI (-28% to +3%) just crosses zero, so treat it as a likely gain, not a proven
+  one. It never cost clearly more.
+- **Lazy discovery (Cloudflare's current design, skills-style progressive disclosure) did not
+  help at this size.** Names-only discovery was clearly worse (+57%); the skills-style index was a
+  tie (+8%, CI crosses zero). Each `describe()` round adds a model call and brings schema text into context.
   With 24 tools, loading everything up front is cheaper. Lazy discovery likely only pays off
   with hundreds of tools, which this benchmark did not test.
 - **The format of the listing matters little.** YAML frontmatter and Python stubs came out
@@ -247,7 +258,8 @@ lookup costs a model round-trip plus the schema text.
   signatures, and it cost about 30% less. So PTC's higher cost is not just its larger prompt.
   It may come from JS/QuickJS or from the middleware's own prompt text; this benchmark did not
   separate the two.
-- **Keeping state between calls** helps a little (`fresh` +10%), mostly through re-fetching.
+- **Keeping state between calls** may help a little (`fresh` +10%, a tie statistically); the
+  fresh runs re-fetched more (17% more MCP calls).
 
 ## 3. Integration lessons
 
@@ -264,18 +276,23 @@ lookup costs a model round-trip plus the schema text.
 
 ## Caveats
 
-- 3 runs per task and mode. Treat differences under about ±10% (index, fresh) as ties.
+- 3 runs per task and mode. The 95% CIs in [`results/stats.md`](../results/stats.md) separate
+  what is clear (code vs MCP cost and tokens, `names` and `ptc` costing more) from ties
+  (`index`, `fresh`) and leans (`api=full`).
+- The headline -53% leans on the `write` task; without it the gap is about -23%.
 - One server (Notion, 24 tools), one model, and small tasks. Phase 3 (large paginated reads,
   joins, bulk updates) was not run. Code mode should gain most there.
-- The `@notionhq/notion-mcp-server` version was not pinned. The ablation's `update` task was
+- The `@notionhq/notion-mcp-server` version was not pinned in the runs; the npx cache shows
+  2.6.1 installed the day of the runs, and `bench/servers.py` now pins 2.6.1. The ablation's `update` task was
   re-run in a second session after the first ran out of API credit; the report combines both.
 - Code mode's `exec` is not a security sandbox. Any real use needs an isolated runtime.
 
 ## Recommendation
 
-For an agent calling an MCP server with tens of tools: use code mode. Give the model a
-detailed, fully listed API, keep interpreter state for the whole run, and parse tool results
-into native values before the code sees them.
+For an agent calling an MCP server with tens of tools: use code mode when the tasks move a
+lot of data, and expect it to be a bit slower. List the whole API up front (the detailed listing
+is the best bet), keep interpreter state for the whole run, and parse tool results into native
+values before the code sees them. Do not hide the API behind name-only lookups.
 
 For a design that applies these findings to several agents sharing one full API listing, see
 [MULTI_AGENT.md](MULTI_AGENT.md) (not built or measured).

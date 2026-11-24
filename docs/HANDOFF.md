@@ -30,9 +30,9 @@ LangChain's PTC (JS) came in at -45%. Inside code mode, a fully listed, detailed
 
 1. **Phase 3 tasks** where code mode should gain most: `bulk_aggregate` (150+ rows,
    pagination), `join` (two data sources), `bulk_update`. Needs a bigger fixture and a re-seed.
-2. **Phase 4 reproducibility:** pin `@notionhq/notion-mcp-server` (or record its version and a
-   hash of the tool list), use `--runs 5`+, report mean ± 95% CI and median, record versions in
-   `summary.json`.
+2. **Phase 4 reproducibility (partly done):** the server is pinned to 2.6.1 and
+   `bench-stats` gives 95% CIs and medians (`results/stats.md`). Still open: `--runs 5`+ to
+   tighten the CIs (`api=full` crosses zero), and recording versions in `summary.json`.
 3. **Phase 6 (parked):** build the multi-agent design and test it against a single
    `code:api=full` agent on Phase 3 tasks.
 4. **Other MCP servers:** Google Workspace, GitHub, Slack, Linear/Jira, plus Postgres and

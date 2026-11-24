@@ -65,6 +65,7 @@ uv run bench-run --tasks aggregate overdue --runs 5
 uv run bench-run --model claude-sonnet-5-5 --effort low
 uv run bench-run --no-cache        # see what prompt caching does for MCP mode's big tool list
 uv run bench-report results/raw/*.jsonl   # combine several runs into one report
+uv run bench-stats results/raw/<run>.jsonl --base mcp   # 95% confidence intervals, no API calls
 uv run bench-seed --teardown       # archive the sandbox when you're done
 ```
 
