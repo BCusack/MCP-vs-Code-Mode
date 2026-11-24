@@ -25,6 +25,8 @@ LangChain's PTC (JS) came in at -45%. Inside code mode, a fully listed, detailed
   ([MULTI_AGENT.md](MULTI_AGENT.md), not built or measured) (PR #10).
 - First-call prompt dumps for every mode in `results/prompts/`.
 - Stale branches from merged PRs deleted (2026-11-24).
+- Cloudflare code-mode emulations (`cf-stateless`, `cf-durable`), 90-run session on 2026-11-24
+  (`results/cloudflare_report.md`, FINDINGS section 3). Notion fixtures were re-seeded for it.
 
 ## Open (none planned)
 

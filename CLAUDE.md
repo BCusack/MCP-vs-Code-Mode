@@ -13,6 +13,7 @@ uv run bench-run --server mock --runs 1   # offline-data smoke test (still calls
 uv run bench-seed                         # create Notion fixtures (needs NOTION_TOKEN + NOTION_PARENT_PAGE_ID)
 uv run bench-run                          # full run: 6 tasks x 3 modes (mcp, code, ptc) x 3 runs. COSTS MONEY, ask first
 uv run bench-run --modes code code:api=full code:discovery=index,describe=doc --runs 3  # Phase 2 ablation: code-mode variants side by side
+uv run bench-run --modes mcp code ptc cf-stateless cf-durable --runs 3  # Cloudflare emulations (aliases in runner.ALIASES)
 uv run bench-report [results/raw/*.jsonl] # publish results/report.md (bench-run itself writes results/reports/<run>.md)
 uv run bench-stats results/raw/<run>.jsonl --base mcp  # 95% bootstrap CIs from existing runs (free)
 uv run bench-seed --teardown              # archive Notion fixtures

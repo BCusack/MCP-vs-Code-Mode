@@ -2,7 +2,7 @@
 
 A small personal benchmark: does **code mode** beat **classic MCP (Model Context Protocol) tool calling**?
 
-**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Multi-agent design (not built): [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain's PTC, programmatic tool calling) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants).
+**Result:** on the official Notion MCP server, code mode cost 53% less per task than classic MCP tool calling, with the same success rate (100%), but took about 2 s longer per task. Full write-up: [docs/FINDINGS.md](docs/FINDINGS.md). Multi-agent design (not built): [docs/MULTI_AGENT.md](docs/MULTI_AGENT.md). Reports: [results/report.md](results/report.md) (MCP vs code vs LangChain's PTC, programmatic tool calling) and [results/ablation_report.md](results/ablation_report.md) (code-mode variants) and [results/cloudflare_report.md](results/cloudflare_report.md) (emulations of Cloudflare's two code-mode designs: search-based discovery matched the full listing on cost with a 60% smaller prompt, but ran 36% slower).
 
 Both modes use the **same LangGraph agent** (`langchain.agents.create_agent`), the **same Claude model**, the **same MCP server** (the official Notion MCP server), and the **same tasks**. Only the way the model reaches the tools differs.
 
@@ -64,6 +64,7 @@ uv run bench-report               # publish the latest run as results/report.md
 uv run bench-run --tasks aggregate overdue --runs 5
 uv run bench-run --model claude-sonnet-5-5 --effort low
 uv run bench-run --no-cache        # see what prompt caching does for MCP mode's big tool list
+uv run bench-run --modes code cf-stateless cf-durable   # Cloudflare code-mode emulations
 uv run bench-report results/raw/*.jsonl   # combine several runs into one report
 uv run bench-stats results/raw/<run>.jsonl --base mcp   # 95% confidence intervals, no API calls
 uv run bench-seed --teardown       # archive the sandbox when you're done

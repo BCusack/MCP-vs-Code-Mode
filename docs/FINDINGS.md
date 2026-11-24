@@ -5,9 +5,11 @@ server (24 tools). 6 tasks (lookup, aggregate, filter_list, overdue, write, upda
 task and mode. Every mode ran on the same LangGraph `create_agent`, base prompt and MCP session.
 
 Data: [`results/report.md`](../results/report.md) (MCP vs code vs ptc, 54 runs) and
-[`results/ablation_report.md`](../results/ablation_report.md) (code-mode variants, 126 runs).
+[`results/ablation_report.md`](../results/ablation_report.md) (code-mode variants, 126 runs), and
+[`results/cloudflare_report.md`](../results/cloudflare_report.md) (Cloudflare emulations, 90 runs,
+2026-11-24).
 What each mode's model saw on its first call is in [`results/prompts/`](../results/prompts/).
-Every run in both reports passed its deterministic check.
+Every run in all three reports passed its deterministic check.
 
 ## How the modes work
 
@@ -261,7 +263,50 @@ lookup costs a model round-trip plus the schema text.
 - **Keeping state between calls** may help a little (`fresh` +10%, a tie statistically); the
   fresh runs re-fetched more (17% more MCP calls).
 
-## 3. Integration lessons
+## 3. Cloudflare's code mode, emulated
+
+Cloudflare ships code mode as [`@cloudflare/codemode`](https://developers.cloudflare.com/agents/tools/codemode/)
+in two designs. The real package runs code in Cloudflare's Worker Loader and plugs into a
+JavaScript agent loop, so running it would mean comparing two different harnesses. Instead we
+rebuilt both designs inside ours (same agent, prompt base and MCP session):
+
+| | Cloudflare design | Our emulation |
+|---|---|---|
+| `cf-stateless` | `createCodeTool`: all TypeScript types in the tool description, JS, a fresh isolate per execution | `ptc:state=fresh`: PTC with a fresh QuickJS REPL per eval |
+| `cf-durable` | Durable runtime: only the namespace is listed; the model calls `codemode.search()` then `describe()`; a fresh sandbox per execution | `code:discovery=search,describe=doc,state=fresh`: nothing listed; `search("words")` ranks functions by keyword match, `describe()` gives a readable signature; Python |
+
+One new session, all five modes side by side, 6 tasks × 3 runs (90 runs, all passed). Data:
+[`results/cloudflare_report.md`](../results/cloudflare_report.md), CIs in
+[`results/stats.md`](../results/stats.md).
+
+| | MCP | Code (default) | PTC | CF stateless | CF durable |
+|---|---:|---:|---:|---:|---:|
+| Cost per run | $0.0817 | $0.0342 | $0.0472 | $0.0500 | **$0.0329** |
+| Cost vs MCP (95% CI) | | -58% (-67% to -38%) | -42% (-55% to -15%) | -39% (-52% to -9%) | **-60% (-67% to -40%)** |
+| Cost vs default code (95% CI) | | | +38% (+16% to +65%) | +46% (+26% to +71%) | -4% (-15% to +11%), tie |
+| Tasks cheaper than MCP | | 5 of 6 | 4 of 6 | 4 of 6 | **6 of 6** |
+| Total tokens per run | 57,020 | 18,213 | 26,623 | 27,798 | **13,507** (-26% vs code) |
+| First-call input (tokens) | 8,942 | 2,132 | 5,474 | 5,457 | **867** |
+| Model calls per run | 3.3 | 3.7 | 3.3 | 3.3 | 5.1 |
+| Wall time (s) | 9.5 | 11.1 | 11.9 | 11.8 | 15.0 (+36% vs code) |
+
+- **The first result replicated.** In a new session with re-seeded data, default code mode was
+  58% cheaper than MCP (first session: 53%), and MCP's `write` task again cost about $0.25.
+- **Search fixes lazy discovery.** In the ablations, names-only discovery cost 57% more than
+  listing everything. With ranked `search()`, `cf-durable` tied default code mode on cost (CI -15% to +11%) with a prompt 60% smaller
+  and 26% fewer tokens. It was the only mode cheaper than MCP on all six tasks.
+- **The price is time.** The search-then-describe step added about 1.4 model calls per run, so
+  `cf-durable` was 36% slower than default code mode.
+- **Wiping state made little difference on the JS side.** `cf-stateless` landed close to PTC
+  (+6%, within noise). Both JS modes again cost more than Python code mode.
+- **Why this matters at scale:** listing everything up front grows with the tool count, while
+  search keeps the prompt near constant. At 24 tools the two are equal on cost. With hundreds
+  of tools, search should win. That was not tested here.
+
+These are emulations. `cf-durable` uses Python and our own keyword search, not Cloudflare's
+JavaScript runtime or its search ranking.
+
+## 4. Integration lessons
 
 - **MCP tools inside LangChain's PTC return raw content blocks** (`[{type: "text", text:
   "<json>"}]`), while its prompt tells the model that results need no `JSON.parse`. We parse the
@@ -280,6 +325,8 @@ lookup costs a model round-trip plus the schema text.
   what is clear (code vs MCP cost and tokens, `names` and `ptc` costing more) from ties
   (`index`, `fresh`) and leans (`api=full`).
 - The headline -53% leans on the `write` task; without it the gap is about -23%.
+- Each report comes from a separate session. Compare modes within a report; the code vs MCP
+  gap was similar in the two sessions that ran both (-53% and -58%).
 - One server (Notion, 24 tools), one model, and small tasks. Phase 3 (large paginated reads,
   joins, bulk updates) was not run. Code mode should gain most there.
 - The `@notionhq/notion-mcp-server` version was not pinned in the runs; the npx cache shows
@@ -293,6 +340,10 @@ For an agent calling an MCP server with tens of tools: use code mode when the ta
 lot of data, and expect it to be a bit slower. List the whole API up front (the detailed listing
 is the best bet), keep interpreter state for the whole run, and parse tool results into native
 values before the code sees them. Do not hide the API behind name-only lookups.
+
+If the tool list is large, or the prompt budget matters more than latency, use ranked search
+instead (Cloudflare's durable design): it matched the full listing on cost here with a prompt
+60% smaller, at about 1.4 extra model calls per run.
 
 For a design that applies these findings to several agents sharing one full API listing, see
 [MULTI_AGENT.md](MULTI_AGENT.md) (not built or measured).
